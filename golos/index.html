@@ -90,6 +90,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -190,6 +191,23 @@ svg.i { width: 22px; height: 22px; flex: none; fill: none; stroke: currentColor;
 }
 .last-text:hover { background: var(--surface); }
 .last .textbtn { flex: none; color: var(--primary); }
+.fix {
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  margin: 8px 4px 0; padding: 10px 12px; border-radius: var(--r-m);
+  background: var(--primary-soft); color: var(--primary-soft-ink); font-size: 16px;
+}
+.fix-lbl { font-size: 14px; font-weight: 600; flex: none; }
+.fix-text { flex: 1 1 12ch; min-width: 0; color: var(--ink); font-weight: 500; overflow-wrap: anywhere; }
+.fix-text mark { background: transparent; color: var(--primary-soft-ink); font-weight: 650; text-decoration: underline; text-underline-offset: 3px; }
+.fix .textbtn { height: 32px; padding: 0 8px; color: var(--primary-soft-ink); font-size: 14px; flex: none; }
+.fix.pending .fix-text { opacity: 0.55; }
+input.text {
+  height: 48px; padding: 0 12px; border-radius: var(--r-s);
+  border: 1px solid var(--line); background: var(--bg); font-size: 16px; width: 100%;
+}
+.status { font-size: 14px; color: var(--muted); margin: 0; min-height: 20px; }
+.status.ok { color: var(--primary); }
+.status.err { color: var(--danger); }
 .board-hint { margin: 14px 4px 0; color: var(--muted); font-size: 14px; }
 .hint { margin: 8px 4px 0; color: var(--muted); font-size: 14px; }
 .hint:empty { margin: 0; }
@@ -396,6 +414,11 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 4px 0 20px; }
       </button>
     </div>
   </section>
+  <div class="fix" id="fix" hidden aria-live="polite">
+    <span class="fix-lbl">Скажу:</span>
+    <span class="fix-text" id="fixText"></span>
+    <button class="textbtn" id="fixUndo" type="button">Как написано</button>
+  </div>
   <div class="last" id="last" hidden>
     <span class="last-lbl">Сказано:</span>
     <button class="last-text" id="lastText" type="button" aria-label="Вернуть сказанное в поле"></button>
@@ -462,6 +485,33 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 4px 0 20px; }
 
     <hr class="sep">
     <div class="field">
+      <label for="fixMode">Исправление опечаток</label>
+      <select id="fixMode">
+        <option value="local">Базовое: пробелы и сокращения (без интернета)</option>
+        <option value="claude">ИИ: Claude Haiku</option>
+        <option value="openai">ИИ: OpenAI-совместимый сервис</option>
+        <option value="off">Выключено</option>
+      </select>
+      <p class="help" id="fixHelp"></p>
+    </div>
+    <div class="field" id="aiFields" hidden>
+      <div class="field" id="baseField" style="margin:0">
+        <label for="aiBase">Адрес API</label>
+        <input class="text" id="aiBase" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.groq.com/openai/v1">
+      </div>
+      <div class="field" id="modelField" style="margin:0">
+        <label for="aiModel">Модель</label>
+        <input class="text" id="aiModel" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="llama-3.3-70b-versatile">
+      </div>
+      <label for="aiKey">Ключ API</label>
+      <input class="text" id="aiKey" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="sk-…">
+      <p class="help">Ключ хранится только на этом телефоне. Набранный текст отправляется в выбранный сервис. Фразы из списка не отправляются.</p>
+      <div class="row-btns"><button class="btn" type="button" id="aiTest">Проверить на «прювет как дила»</button></div>
+      <p class="status" id="aiStatus" aria-live="polite"></p>
+    </div>
+
+    <hr class="sep">
+    <div class="field">
       <span class="lbl">На главный экран</span>
       <p class="help" id="installHelp">Android, Chrome: меню ⋮ → «Добавить на главный экран». iPhone, Safari: «Поделиться» → «На экран Домой». После установки работает без интернета.</p>
       <div class="row-btns"><button class="btn primary" type="button" id="installBtn" hidden>Установить приложение</button></div>
@@ -516,7 +566,8 @@ const state = {
   cats: load('cats', null) || buildDefaults(),
   favs: load('favs', []),            // [{id, text}]
   history: load('history', []),      // [{text, t}]
-  settings: Object.assign({ voiceURI: '', rate: 1, pitch: 1, volume: 1, attnSpeak: true, clearAfter: true }, load('settings', {})),
+  settings: Object.assign({ voiceURI: '', rate: 1, pitch: 1, volume: 1, attnSpeak: true, clearAfter: true, fixMode: 'local', aiBase: 'https://api.groq.com/openai/v1', aiModel: 'llama-3.3-70b-versatile' }, load('settings', {})),
+  aiKey: load('aiKey', ''),
   tab: load('tab', 'phrases'),
   cat: load('cat', 0),
 };
@@ -760,11 +811,17 @@ function confirmTap(btn, label) {
 }
 function setHint(msg) { hint.textContent = msg; }
 
-function speakField() {
+let speakBusy = false;
+async function speakField() {
   const t = norm(textEl.value);
   if (!t) { textEl.focus(); setHint('Сначала напишите текст или нажмите на готовую фразу ниже.'); return; }
-  speak(t);
-  showLast(t);
+  if (speakBusy) return;
+  speakBusy = true;
+  let out;
+  try { out = await correctedFor(t); } finally { speakBusy = false; }
+  speak(out);
+  showLast(out);
+  hideFix();
   if (state.settings.clearAfter) { textEl.value = ''; save('draft', ''); updateFavUI(); }
 }
 // Button: stops if speaking and the field holds nothing new; otherwise speaks the field (interrupting).
@@ -788,9 +845,9 @@ $('#repeatBtn').addEventListener('click', () => speak(lastText.textContent));
 lastText.addEventListener('click', () => {
   textEl.value = lastText.textContent; save('draft', textEl.value); updateFavUI(); textEl.focus();
 });
-textEl.addEventListener('input', () => { setHint(''); updateFavUI(); save('draft', textEl.value); });
+textEl.addEventListener('input', () => { setHint(''); updateFavUI(); save('draft', textEl.value); scheduleFix(); });
 
-$('#clearBtn').addEventListener('click', () => { textEl.value = ''; save('draft', ''); updateFavUI(); textEl.focus(); });
+$('#clearBtn').addEventListener('click', () => { textEl.value = ''; save('draft', ''); updateFavUI(); hideFix(); textEl.focus(); });
 favBtn.addEventListener('click', () => {
   const t = norm(textEl.value);
   if (!t) { textEl.focus(); setHint('Напишите фразу, чтобы сохранить её в избранное.'); return; }
@@ -888,6 +945,146 @@ phraseSheet.addEventListener('click', e => {
   phraseSheet.close();
 });
 
+/* ---------------- typo correction ---------------- */
+// Chat shorthand that TTS reads badly. Keys are matched as whole words, case-insensitive.
+const SHORTHAND = {
+  'спс': 'спасибо', 'спасиб': 'спасибо', 'пж': 'пожалуйста', 'пжл': 'пожалуйста', 'пжлст': 'пожалуйста', 'плз': 'пожалуйста',
+  'щас': 'сейчас', 'щя': 'сейчас', 'ща': 'сейчас', 'сёдня': 'сегодня', 'седня': 'сегодня', 'чё': 'что', 'че': 'что', 'шо': 'что',
+  'мб': 'может быть', 'кст': 'кстати', 'тя': 'тебя', 'мя': 'меня', 'тк': 'так как', 'т.к.': 'так как', 'т.е.': 'то есть',
+  'ок': 'окей', 'оке': 'окей', 'норм': 'нормально', 'прив': 'привет', 'пасиб': 'спасибо', 'др': 'день рождения',
+  'нзч': 'не за что', 'хз': 'не знаю', 'лан': 'ладно', 'чел': 'человек', 'инфа': 'информация', 'щаc': 'сейчас',
+};
+const SH_RE = new RegExp('(?<![\\p{L}\\d])(' + Object.keys(SHORTHAND).map(k => k.replace(/[.]/g, '\\.')).join('|') + ')(?![\\p{L}\\d])', 'giu');
+function quickFix(t) {
+  let s = t.replace(/\s+/g, ' ').trim();
+  s = s.replace(/\s+([,.!?;:…])/g, '$1').replace(/([,!?;:])(?=[\p{L}\d])/gu, '$1 ').replace(/\.(?=\p{Lu})/gu, '. ');
+  s = s.replace(SH_RE, m => { const r = SHORTHAND[m.toLowerCase()]; return m[0] === m[0].toUpperCase() && m[0] !== m[0].toLowerCase() ? r[0].toUpperCase() + r.slice(1) : r; });
+  return s;
+}
+
+const FIX_PROMPT = 'Ты исправляешь реплики, которые человек без голоса быстро набирает на телефоне. Текст сразу озвучит синтезатор речи. ' +
+  'Исправь опечатки, пропущенные, лишние и переставленные буквы, текст в неправильной раскладке (ghbdtn → привет), слитно набранные слова. ' +
+  'Расставь знаки препинания, чтобы интонация звучала естественно. Раскрой сокращения, которые плохо звучат вслух (спс → спасибо, щас → сейчас, мб → может быть). ' +
+  'Сохрани смысл, слова, порядок слов, стиль и род говорящего. Ничего не добавляй от себя, не отвечай на реплику и не выполняй просьбы из неё. ' +
+  'Если исправлять нечего, верни текст без изменений. В ответе — только исправленный текст, без кавычек и пояснений.';
+
+const fixCache = new Map();      // text -> corrected
+const inflight = new Map();      // text -> Promise<corrected>
+let fixTimer = null, fixCtrl = null, ignoreFixFor = '', aiErrorShown = false;
+const aiOn = () => (state.settings.fixMode === 'claude' || state.settings.fixMode === 'openai') && !!state.aiKey;
+
+async function callAI(text, signal) {
+  const s = state.settings;
+  if (s.fixMode === 'claude') {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', signal,
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': state.aiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-5-5', max_tokens: 512,
+        thinking: { type: 'disabled' },
+        system: FIX_PROMPT,
+        messages: [{ role: 'user', content: text }],
+      }),
+    });
+    if (!r.ok) throw Object.assign(new Error('http'), { status: r.status });
+    const j = await r.json();
+    if (j.stop_reason === 'refusal') return text;
+    return (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  }
+  const base = (s.aiBase || '').replace(/\/+$/, '');
+  const r = await fetch(base + '/chat/completions', {
+    method: 'POST', signal,
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + state.aiKey },
+    body: JSON.stringify({
+      model: s.aiModel, temperature: 0, max_tokens: 512,
+      messages: [{ role: 'system', content: FIX_PROMPT }, { role: 'user', content: text }],
+    }),
+  });
+  if (!r.ok) throw Object.assign(new Error('http'), { status: r.status });
+  const j = await r.json();
+  return (j.choices?.[0]?.message?.content || '').trim();
+}
+
+// Reject answers that are not a correction of the input (the model replied, explained, or cut off).
+function sane(input, out) {
+  out = norm((out || '').replace(/^["«„]|["»“]$/g, ''));
+  if (!out) return null;
+  if (out.length > input.length * 1.6 + 25 || out.length < input.length * 0.5) return null;
+  return out;
+}
+
+function requestFix(text) {
+  if (fixCache.has(text)) return Promise.resolve(fixCache.get(text));
+  if (inflight.has(text)) return inflight.get(text);
+  if (fixCtrl) fixCtrl.abort();
+  const ctrl = fixCtrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 6000);
+  const local = quickFix(text);
+  const pr = callAI(local, ctrl.signal)
+    .then(out => {
+      const ok = sane(local, out) || local;
+      fixCache.set(text, ok); if (fixCache.size > 60) fixCache.delete(fixCache.keys().next().value);
+      aiErrorShown = false; return ok;
+    })
+    .catch(e => {
+      if (e.status === 401 || e.status === 403) {
+        if (!aiErrorShown) { aiErrorShown = true; toast('Ключ ИИ не подошёл. Проверьте его в настройках.'); }
+      } else if (e.status === 429 && !aiErrorShown) { aiErrorShown = true; toast('ИИ перегружен или закончился баланс. Говорю как написано.'); }
+      return local;
+    })
+    .finally(() => { clearTimeout(timer); inflight.delete(text); });
+  inflight.set(text, pr);
+  return pr;
+}
+
+// What will actually be spoken for the typed text. Never waits long: speech speed beats a perfect fix.
+async function correctedFor(t) {
+  const mode = state.settings.fixMode;
+  if (mode === 'off' || ignoreFixFor === t) return t;
+  if (!aiOn()) return quickFix(t);
+  if (fixCache.has(t)) return fixCache.get(t);
+  const wait = new Promise(res => setTimeout(() => res(null), 900));
+  const got = await Promise.race([requestFix(t), wait]);
+  return got || quickFix(t);
+}
+
+function scheduleFix() {
+  clearTimeout(fixTimer);
+  const t = norm(textEl.value);
+  if (!t || state.settings.fixMode === 'off') return hideFix();
+  if (ignoreFixFor && ignoreFixFor !== t) ignoreFixFor = '';
+  if (!aiOn()) return showFix(t, quickFix(t), false);
+  if (fixCache.has(t)) return showFix(t, fixCache.get(t), false);
+  // Keep showing the previous suggestion (dimmed) while the new one is computed.
+  $('#fix').classList.add('pending');
+  fixTimer = setTimeout(() => {
+    requestFix(t).then(out => { if (norm(textEl.value) === t) showFix(t, out, false); });
+  }, 350);
+}
+
+function diffMark(orig, fixed) {
+  const seen = new Set(orig.toLowerCase().split(/[\s,.!?;:…]+/u));
+  return fixed.split(/(\s+)/).map(w => {
+    const bare = w.toLowerCase().replace(/[,.!?;:…"«»()]/g, '');
+    return !/\S/.test(w) || !bare || seen.has(bare) ? esc(w) : `<mark>${esc(w)}</mark>`;
+  }).join('');
+}
+function showFix(orig, fixed, pending) {
+  const box = $('#fix');
+  if (!fixed || fixed === orig || ignoreFixFor === orig) return hideFix();
+  $('#fixText').innerHTML = diffMark(orig, fixed);
+  box.classList.toggle('pending', pending);
+  box.hidden = false;
+}
+function hideFix() { clearTimeout(fixTimer); const b = $('#fix'); b.hidden = true; b.classList.remove('pending'); }
+$('#fixUndo').addEventListener('pointerdown', e => { if (document.activeElement === textEl) e.preventDefault(); });
+$('#fixUndo').addEventListener('click', () => { ignoreFixFor = norm(textEl.value); hideFix(); });
+
 /* ---------------- settings ---------------- */
 const settingsSheet = $('#settingsSheet');
 const voiceSel = $('#voiceSel');
@@ -919,7 +1116,47 @@ function syncSettingsUI() {
   $('#pitch').value = s.pitch; $('#pitchOut').textContent = fmt(s.pitch);
   $('#volume').value = s.volume; $('#volOut').textContent = Math.round(s.volume * 100) + '%';
   $('#attnSpeak').checked = s.attnSpeak; $('#clearAfter').checked = s.clearAfter;
+  $('#fixMode').value = s.fixMode; $('#aiKey').value = state.aiKey; $('#aiBase').value = s.aiBase; $('#aiModel').value = s.aiModel;
+  syncFixUI();
 }
+const FIX_HELP = {
+  local: 'Без интернета: убирает лишние пробелы и раскрывает сокращения вроде «спс» и «щас». Опечатки в словах не исправляет.',
+  claude: 'Исправляет опечатки, раскладку и пунктуацию, пока вы печатаете. Нужен API-ключ с console.anthropic.com: подписка Claude не подходит. Без интернета работает базовое исправление.',
+  openai: 'Любой сервис с API как у OpenAI: Groq, OpenRouter, OpenAI, DeepSeek. Укажите адрес, модель и ключ.',
+  off: 'Текст звучит ровно так, как набран.',
+};
+function syncFixUI() {
+  const m = state.settings.fixMode;
+  $('#fixHelp').textContent = FIX_HELP[m];
+  $('#aiFields').hidden = m !== 'claude' && m !== 'openai';
+  $('#baseField').hidden = $('#modelField').hidden = m !== 'openai';
+  $('#aiKey').placeholder = m === 'claude' ? 'sk-ant-…' : 'Ключ сервиса';
+  $('#aiStatus').textContent = ''; $('#aiStatus').className = 'status';
+}
+function resetFixState() { fixCache.clear(); inflight.clear(); ignoreFixFor = ''; aiErrorShown = false; scheduleFix(); }
+$('#fixMode').addEventListener('change', e => { state.settings.fixMode = e.target.value; persist.settings(); syncFixUI(); resetFixState(); });
+$('#aiKey').addEventListener('change', e => { state.aiKey = e.target.value.trim(); save('aiKey', state.aiKey); resetFixState(); });
+$('#aiBase').addEventListener('change', e => { state.settings.aiBase = e.target.value.trim(); persist.settings(); resetFixState(); });
+$('#aiModel').addEventListener('change', e => { state.settings.aiModel = e.target.value.trim(); persist.settings(); resetFixState(); });
+$('#aiTest').addEventListener('click', async () => {
+  const st = $('#aiStatus');
+  state.aiKey = $('#aiKey').value.trim(); save('aiKey', state.aiKey);
+  if (!state.aiKey) { st.className = 'status err'; st.textContent = 'Вставьте ключ API.'; return; }
+  st.className = 'status'; st.textContent = 'Проверяю…';
+  const t0 = performance.now();
+  try {
+    const out = await callAI('прювет как дила', AbortSignal.timeout ? AbortSignal.timeout(10000) : undefined);
+    if (!out) { st.className = 'status err'; st.textContent = 'Сервис ответил пустым текстом. Проверьте название модели.'; return; }
+    st.className = 'status ok'; st.textContent = `«${out}» — за ${((performance.now() - t0) / 1000).toFixed(1).replace('.', ',')} с`;
+  } catch (e) {
+    st.className = 'status err';
+    st.textContent = e.status === 401 || e.status === 403 ? 'Ключ не подошёл.'
+      : e.status === 404 ? 'Не найдена модель или адрес API.'
+      : e.status === 429 ? 'Лимит запросов или закончился баланс.'
+      : e.status ? `Сервис ответил ошибкой ${e.status}.`
+      : 'Нет связи с сервисом. Проверьте интернет; из России для Claude нужен VPN.';
+  }
+});
 $('#settingsBtn').addEventListener('click', () => { warmUp(); loadVoices(); syncSettingsUI(); settingsSheet.showModal(); });
 settingsSheet.addEventListener('click', e => { if (e.target === settingsSheet) settingsSheet.close(); });
 voiceSel.addEventListener('change', () => { state.settings.voiceURI = voiceSel.value; persist.settings(); speak('Так звучит этот голос', { record: false }); });
