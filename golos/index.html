@@ -1,0 +1,960 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Голос</title>
+<meta name="description" content="Озвучка текста для тех, кто временно или постоянно не может говорить">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0b0b" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Голос">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: oklch(1 0 0);
+  --surface: oklch(0.972 0.006 232);
+  --surface-2: oklch(0.94 0.011 232);
+  --line: oklch(0.885 0.013 232);
+  --ink: oklch(0.21 0.02 236);
+  --muted: oklch(0.47 0.02 236);
+  --primary: oklch(0.47 0.12 234);
+  --primary-press: oklch(0.40 0.12 234);
+  --primary-ink: oklch(1 0 0);
+  --primary-soft: oklch(0.94 0.03 234);
+  --primary-soft-ink: oklch(0.36 0.11 234);
+  --signal: oklch(0.82 0.15 78);
+  --signal-press: oklch(0.76 0.15 72);
+  --signal-ink: oklch(0.24 0.05 60);
+  --danger: oklch(0.53 0.19 27);
+  --focus: oklch(0.62 0.14 234);
+  --shadow: 0 1px 2px oklch(0.2 0.02 236 / 0.06), 0 8px 24px oklch(0.2 0.02 236 / 0.08);
+
+  --r-s: 10px;
+  --r-m: 14px;
+  --r-l: 20px;
+  --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+
+  --z-sticky: 10;
+  --z-toast: 40;
+  --sheet: var(--bg);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: oklch(0.13 0 0);
+    --surface: oklch(0.185 0.008 236);
+    --surface-2: oklch(0.235 0.011 236);
+    --line: oklch(0.30 0.012 236);
+    --ink: oklch(0.95 0.005 236);
+    --muted: oklch(0.73 0.014 236);
+    --primary: oklch(0.70 0.12 234);
+    --primary-press: oklch(0.64 0.12 234);
+    --primary-ink: oklch(0.16 0.03 236);
+    --primary-soft: oklch(0.27 0.045 234);
+    --primary-soft-ink: oklch(0.86 0.06 234);
+    --signal: oklch(0.83 0.15 78);
+    --signal-press: oklch(0.77 0.15 72);
+    --signal-ink: oklch(0.22 0.05 60);
+    --danger: oklch(0.68 0.17 27);
+    --focus: oklch(0.75 0.12 234);
+    --shadow: 0 1px 2px oklch(0 0 0 / 0.4), 0 8px 24px oklch(0 0 0 / 0.35);
+    --sheet: var(--surface);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: oklch(0.13 0 0);
+  --surface: oklch(0.185 0.008 236);
+  --surface-2: oklch(0.235 0.011 236);
+  --line: oklch(0.30 0.012 236);
+  --ink: oklch(0.95 0.005 236);
+  --muted: oklch(0.73 0.014 236);
+  --primary: oklch(0.70 0.12 234);
+  --primary-press: oklch(0.64 0.12 234);
+  --primary-ink: oklch(0.16 0.03 236);
+  --primary-soft: oklch(0.27 0.045 234);
+  --primary-soft-ink: oklch(0.86 0.06 234);
+  --signal: oklch(0.83 0.15 78);
+  --signal-press: oklch(0.77 0.15 72);
+  --signal-ink: oklch(0.22 0.05 60);
+  --danger: oklch(0.68 0.17 27);
+  --focus: oklch(0.75 0.12 234);
+  --shadow: 0 1px 2px oklch(0 0 0 / 0.4), 0 8px 24px oklch(0 0 0 / 0.35);
+  --sheet: var(--surface);
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  min-height: 100dvh;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; touch-action: manipulation; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+svg.i { width: 22px; height: 22px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.app {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: max(10px, env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+}
+
+/* ---------- top bar ---------- */
+.top {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 0 12px;
+}
+.brand { display: flex; align-items: center; gap: 8px; margin-right: auto; font-weight: 650; font-size: 18px; letter-spacing: -0.01em; }
+.brand svg { width: 26px; height: 26px; }
+.iconbtn {
+  display: inline-grid; place-items: center;
+  width: 48px; height: 48px; border-radius: var(--r-m);
+  border: 0; background: transparent; color: var(--muted);
+  transition: background-color 160ms var(--ease-out), color 160ms var(--ease-out), transform 120ms var(--ease-out);
+}
+.iconbtn:hover { background: var(--surface); color: var(--ink); }
+.iconbtn:active { transform: scale(0.94); background: var(--surface-2); }
+.iconbtn[aria-pressed="true"] { color: var(--primary); }
+
+.signal {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 48px; padding: 0 18px 0 14px; border-radius: 999px; border: 0;
+  background: var(--signal); color: var(--signal-ink);
+  font-weight: 650; font-size: 17px;
+  transition: background-color 160ms var(--ease-out), transform 120ms var(--ease-out);
+}
+.signal:hover { background: var(--signal-press); }
+.signal:active { transform: scale(0.96); }
+.signal.ringing svg { animation: ring 600ms var(--ease-out); }
+@keyframes ring {
+  0% { transform: rotate(0); } 20% { transform: rotate(-16deg); } 40% { transform: rotate(13deg); }
+  60% { transform: rotate(-8deg); } 80% { transform: rotate(4deg); } 100% { transform: rotate(0); }
+}
+
+/* ---------- composer ---------- */
+.composer {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-l);
+  padding: 6px;
+  transition: border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
+}
+.composer:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px color-mix(in oklch, var(--focus) 22%, transparent); }
+.composer textarea {
+  display: block; width: 100%;
+  min-height: 116px; max-height: 40dvh;
+  resize: none; border: 0; outline: 0; background: transparent;
+  padding: 12px 12px 8px;
+  font-size: 22px; line-height: 1.35; font-weight: 450;
+  field-sizing: content;
+}
+.composer textarea::placeholder { color: var(--muted); opacity: 1; }
+.composer-actions { display: flex; align-items: center; gap: 4px; padding: 2px; }
+.composer-actions .spacer { flex: 1; }
+
+.speak {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  min-width: 156px; height: 56px; padding: 0 24px;
+  border: 0; border-radius: var(--r-m);
+  background: var(--primary); color: var(--primary-ink);
+  font-size: 19px; font-weight: 650;
+  transition: background-color 160ms var(--ease-out), transform 120ms var(--ease-out);
+}
+.speak:hover { background: var(--primary-press); }
+.speak:active { transform: scale(0.97); }
+.speak .bars { display: none; align-items: center; gap: 3px; height: 20px; }
+.speak .bars i { width: 3px; height: 100%; border-radius: 2px; background: currentColor; transform-origin: center; animation: bar 900ms ease-in-out infinite; }
+.speak .bars i:nth-child(2) { animation-delay: -300ms; }
+.speak .bars i:nth-child(3) { animation-delay: -600ms; }
+@keyframes bar { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
+.speak.is-speaking .play { display: none; }
+.speak.is-speaking .bars { display: inline-flex; }
+
+.last { display: flex; align-items: center; gap: 6px; margin: 8px 4px 0; min-width: 0; }
+.last-lbl { color: var(--muted); font-size: 14px; flex: none; }
+.last-text {
+  flex: 1; min-width: 0; height: 40px; padding: 0 6px; border: 0; border-radius: var(--r-s); background: transparent;
+  text-align: left; font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.last-text:hover { background: var(--surface); }
+.last .textbtn { flex: none; color: var(--primary); }
+.board-hint { margin: 14px 4px 0; color: var(--muted); font-size: 14px; }
+.hint { margin: 8px 4px 0; color: var(--muted); font-size: 14px; }
+.hint:empty { margin: 0; }
+
+/* ---------- tabs ---------- */
+.tabs {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: var(--z-sticky);
+  display: flex; gap: 4px; margin: 12px -16px 0; padding: 8px 16px;
+  background: color-mix(in oklch, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.tab {
+  flex: 1; height: 44px; border: 0; border-radius: var(--r-s);
+  background: transparent; color: var(--muted); font-weight: 600; font-size: 15px;
+  transition: background-color 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+.tab:hover { color: var(--ink); }
+.tab[aria-selected="true"] { background: var(--surface-2); color: var(--ink); }
+.tab .count { font-weight: 500; color: var(--muted); margin-left: 4px; font-variant-numeric: tabular-nums; }
+
+/* ---------- categories ---------- */
+.cats {
+  display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none;
+  margin: 8px -16px 4px; padding: 4px 16px 8px;
+  scroll-snap-type: x proximity;
+}
+.cats::-webkit-scrollbar { display: none; }
+.chip {
+  flex: none; height: 40px; padding: 0 16px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  font-size: 15px; font-weight: 550; scroll-snap-align: start;
+  transition: background-color 160ms var(--ease-out), border-color 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+.chip:hover { border-color: var(--muted); }
+.chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+
+/* ---------- phrase board ---------- */
+.board { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 6px; }
+.phrase {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 56px; max-width: 100%; padding: 12px 16px;
+  border: 0; border-radius: var(--r-m);
+  background: var(--surface-2); color: var(--ink);
+  font-size: 18px; font-weight: 500; line-height: 1.25; text-align: left;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  transition: background-color 160ms var(--ease-out), transform 140ms var(--ease-out), box-shadow 160ms var(--ease-out);
+}
+.phrase:hover { background: color-mix(in oklch, var(--surface-2) 70%, var(--line)); }
+.phrase:active { transform: scale(0.97); }
+.phrase.short { min-width: 88px; justify-content: center; font-weight: 600; }
+.phrase.is-playing { background: var(--primary-soft); color: var(--primary-soft-ink); box-shadow: inset 0 0 0 2px var(--primary); }
+.phrase .star { width: 16px; height: 16px; color: var(--signal-press); fill: currentColor; stroke: none; }
+.phrase.add {
+  background: transparent; color: var(--primary); box-shadow: inset 0 0 0 1.5px var(--line);
+  font-size: 16px; font-weight: 600;
+}
+.phrase.add:hover { box-shadow: inset 0 0 0 1.5px var(--primary); background: transparent; }
+
+/* ---------- history list ---------- */
+.list { list-style: none; margin: 6px 0 0; padding: 0; }
+.row {
+  display: flex; align-items: center; gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.row:last-child { border-bottom: 0; }
+.row-main {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  min-height: 60px; padding: 10px 4px; border: 0; background: transparent; text-align: left; border-radius: var(--r-s);
+  transition: background-color 160ms var(--ease-out);
+}
+.row-main:hover { background: var(--surface); }
+.row-main .t { font-size: 18px; font-weight: 500; overflow-wrap: anywhere; }
+.row-main .when { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.row.is-playing .t { color: var(--primary); }
+
+.empty { padding: 32px 8px 8px; color: var(--muted); max-width: 42ch; }
+.empty strong { display: block; color: var(--ink); font-size: 17px; margin-bottom: 4px; }
+
+.textbtn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 40px; padding: 0 12px; border: 0; border-radius: var(--r-s);
+  background: transparent; color: var(--muted); font-size: 15px; font-weight: 550;
+}
+.textbtn:hover { background: var(--surface); color: var(--ink); }
+.textbtn.danger:hover { color: var(--danger); }
+.armed { color: var(--danger) !important; }
+.list-foot { display: flex; justify-content: flex-end; padding-top: 8px; }
+
+/* ---------- sheets (native dialog) ---------- */
+dialog.sheet {
+  width: min(100%, 560px); max-width: 100%; max-height: 88dvh;
+  margin: auto auto 0; padding: 0;
+  border: 0; border-radius: var(--r-l) var(--r-l) 0 0;
+  background: var(--sheet); color: var(--ink); box-shadow: var(--shadow);
+  overscroll-behavior: contain;
+}
+@media (min-width: 600px) { dialog.sheet { margin: auto; border-radius: var(--r-l); } }
+dialog.sheet::backdrop { background: oklch(0.15 0.01 236 / 0.45); }
+dialog.sheet[open] { animation: sheet-in 240ms var(--ease-out); }
+dialog.sheet[open]::backdrop { animation: fade-in 240ms var(--ease-out); }
+@keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } }
+@keyframes fade-in { from { opacity: 0; } }
+.sheet-in { padding: 8px 20px calc(20px + env(safe-area-inset-bottom)); }
+.grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 6px auto 10px; }
+.sheet h2 { margin: 4px 0 16px; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+.sheet-quote {
+  margin: 0 0 14px; padding: 14px 16px; border-radius: var(--r-m);
+  background: var(--surface-2); font-size: 18px; font-weight: 500; overflow-wrap: anywhere;
+}
+.actions-col { display: grid; gap: 4px; }
+.action {
+  display: flex; align-items: center; gap: 14px; width: 100%;
+  min-height: 52px; padding: 0 14px; border: 0; border-radius: var(--r-m);
+  background: transparent; text-align: left; font-size: 17px; font-weight: 500;
+}
+.action:hover { background: var(--surface); }
+.action svg { color: var(--muted); }
+.action.danger { color: var(--danger); }
+.action.danger svg { color: currentColor; }
+
+.field { display: grid; gap: 8px; margin-bottom: 20px; }
+.field > label, .field > .lbl { font-weight: 600; font-size: 15px; display: flex; justify-content: space-between; align-items: baseline; }
+.field output { font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+.field .help { font-size: 14px; color: var(--muted); margin: 0; }
+select {
+  height: 48px; padding: 0 12px; border-radius: var(--r-s);
+  border: 1px solid var(--line); background: var(--bg);
+  font-size: 16px; width: 100%;
+}
+input[type="range"] { width: 100%; height: 32px; accent-color: var(--primary); }
+.switch { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 48px; font-size: 16px; }
+.switch input { width: 22px; height: 22px; accent-color: var(--primary); flex: none; }
+.row-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn {
+  height: 48px; padding: 0 18px; border-radius: var(--r-m); border: 1px solid var(--line);
+  background: var(--bg); font-weight: 600; font-size: 16px;
+  transition: background-color 160ms var(--ease-out);
+}
+.btn:hover { background: var(--surface); }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.btn.primary:hover { background: var(--primary-press); }
+.notice {
+  margin: 0 0 16px; padding: 12px 14px; border-radius: var(--r-m);
+  background: color-mix(in oklch, var(--signal) 22%, var(--bg)); color: var(--ink); font-size: 15px;
+}
+.notice[hidden] { display: none; }
+hr.sep { border: 0; border-top: 1px solid var(--line); margin: 4px 0 20px; }
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); z-index: var(--z-toast);
+  transform: translate(-50%, 12px); opacity: 0; pointer-events: none;
+  padding: 12px 18px; border-radius: 999px; background: var(--ink); color: var(--bg);
+  font-size: 15px; font-weight: 550; box-shadow: var(--shadow);
+  transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
+  width: max-content; max-width: calc(100% - 32px);
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
+  .speak .bars i { transform: scaleY(0.7); }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-logo" viewBox="0 0 32 32"><rect width="32" height="32" rx="9" fill="var(--primary)"/><path d="M10 13v6M14 10v12M18 12.5v7M22 14.5v3" stroke="var(--primary-ink)" stroke-width="2.4" stroke-linecap="round" fill="none"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+ <symbol id="i-repeat" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+</svg>
+
+<div class="app">
+  <header class="top">
+    <div class="brand"><svg aria-hidden="true"><use href="#i-logo"/></svg>Голос</div>
+    <button class="signal" id="signalBtn" type="button" aria-label="Привлечь внимание: звуковой сигнал">
+      <svg class="i" aria-hidden="true"><use href="#i-bell"/></svg>Позвать
+    </button>
+    <button class="iconbtn" id="settingsBtn" type="button" aria-label="Настройки голоса">
+      <svg class="i" aria-hidden="true"><use href="#i-gear"/></svg>
+    </button>
+  </header>
+
+  <section class="composer" aria-label="Что сказать">
+    <label for="text" class="sr">Текст для озвучки</label>
+    <textarea id="text" rows="3" placeholder="Напишите, что сказать…" enterkeyhint="send" autocomplete="off" autocapitalize="sentences" spellcheck="true"></textarea>
+    <div class="composer-actions">
+      <button class="iconbtn" id="clearBtn" type="button" aria-label="Очистить поле"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+      <button class="iconbtn" id="favBtn" type="button" aria-label="Сохранить в избранное" aria-pressed="false"><svg class="i" aria-hidden="true"><use href="#i-star"/></svg></button>
+      <span class="spacer"></span>
+      <button class="speak" id="speakBtn" type="button">
+        <svg class="i play" aria-hidden="true"><use href="#i-play"/></svg>
+        <span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span id="speakLabel">Сказать</span>
+      </button>
+    </div>
+  </section>
+  <div class="last" id="last" hidden>
+    <span class="last-lbl">Сказано:</span>
+    <button class="last-text" id="lastText" type="button" aria-label="Вернуть сказанное в поле"></button>
+    <button class="textbtn" id="repeatBtn" type="button"><svg class="i" aria-hidden="true"><use href="#i-repeat"/></svg>Повторить</button>
+  </div>
+  <p class="hint" id="hint" aria-live="polite"></p>
+
+  <nav class="tabs" role="tablist" aria-label="Разделы">
+    <button class="tab" role="tab" id="tab-phrases" aria-controls="panel" aria-selected="true" data-tab="phrases">Фразы</button>
+    <button class="tab" role="tab" id="tab-favs" aria-controls="panel" aria-selected="false" data-tab="favs">Избранное<span class="count" id="favCount"></span></button>
+    <button class="tab" role="tab" id="tab-history" aria-controls="panel" aria-selected="false" data-tab="history">История</button>
+  </nav>
+
+  <main id="panel" role="tabpanel"></main>
+</div>
+
+<dialog class="sheet" id="phraseSheet" aria-labelledby="phraseSheetTitle">
+  <div class="sheet-in">
+    <div class="grab" aria-hidden="true"></div>
+    <h2 id="phraseSheetTitle" class="sr" tabindex="-1" autofocus>Действия с фразой</h2>
+    <p class="sheet-quote" id="phraseSheetText"></p>
+    <div class="actions-col">
+      <button class="action" data-act="toField" type="button"><svg class="i" aria-hidden="true"><use href="#i-edit"/></svg>Изменить в поле и сказать</button>
+      <button class="action" data-act="fav" type="button"><svg class="i" aria-hidden="true"><use href="#i-star"/></svg><span id="phraseSheetFavLabel">В избранное</span></button>
+      <button class="action danger" data-act="delete" type="button"><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg><span id="phraseSheetDelLabel">Удалить</span></button>
+      <button class="action" data-act="close" type="button"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Отмена</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="sheet" id="settingsSheet" aria-labelledby="settingsTitle">
+  <form class="sheet-in" method="dialog">
+    <div class="grab" aria-hidden="true"></div>
+    <h2 id="settingsTitle" tabindex="-1" autofocus>Голос и настройки</h2>
+    <p class="notice" id="voiceNotice" hidden></p>
+
+    <div class="field">
+      <label for="voiceSel">Голос</label>
+      <select id="voiceSel"></select>
+      <p class="help">Голоса с пометкой «офлайн» звучат без задержки и без интернета.</p>
+    </div>
+    <div class="field">
+      <label for="rate">Скорость <output id="rateOut" for="rate"></output></label>
+      <input type="range" id="rate" min="0.6" max="1.8" step="0.05">
+    </div>
+    <div class="field">
+      <label for="pitch">Высота <output id="pitchOut" for="pitch"></output></label>
+      <input type="range" id="pitch" min="0.5" max="1.6" step="0.05">
+    </div>
+    <div class="field">
+      <label for="volume">Громкость <output id="volOut" for="volume"></output></label>
+      <input type="range" id="volume" min="0.2" max="1" step="0.05">
+    </div>
+    <div class="row-btns" style="margin-bottom:20px">
+      <button class="btn" type="button" id="testVoice">Проверить голос</button>
+    </div>
+    <p class="help" style="margin:-8px 0 20px">Тихо? Прибавьте громкость кнопками телефона во время озвучки: она идёт через громкость мультимедиа.</p>
+
+    <hr class="sep">
+    <div class="field">
+      <label class="switch">Сигнал «Позвать» говорит «Извините!»<input type="checkbox" id="attnSpeak"></label>
+      <label class="switch">Очищать поле после озвучки (сказанное остаётся строкой «Сказано»)<input type="checkbox" id="clearAfter"></label>
+    </div>
+
+    <hr class="sep">
+    <div class="field">
+      <span class="lbl">На главный экран</span>
+      <p class="help" id="installHelp">Android, Chrome: меню ⋮ → «Добавить на главный экран». iPhone, Safari: «Поделиться» → «На экран Домой». После установки работает без интернета.</p>
+      <div class="row-btns"><button class="btn primary" type="button" id="installBtn" hidden>Установить приложение</button></div>
+    </div>
+
+    <hr class="sep">
+    <div class="row-btns">
+      <button class="btn" type="button" id="resetPhrases">Вернуть стандартные фразы</button>
+      <button class="btn primary" value="close">Готово</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+'use strict';
+
+/* ---------------- storage ---------------- */
+const NS = 'golos.v1.';
+const load = (k, d) => { try { const v = localStorage.getItem(NS + k); return v == null ? d : JSON.parse(v); } catch { return d; } };
+const save = (k, v) => { try { localStorage.setItem(NS + k, JSON.stringify(v)); } catch {} };
+
+const DEFAULT_CATS = [
+  { name: 'Главное', items: [
+    'Да', 'Нет', 'Спасибо!', 'Подождите, пожалуйста', 'Хорошо', 'Извините',
+    'У меня пропал голос, я не могу говорить',
+    'Я вас слышу, отвечу через телефон',
+    'Повторите, пожалуйста', 'Не понимаю', 'Не знаю',
+  ]},
+  { name: 'Разговор', items: [
+    'Минутку, я печатаю', 'Можно помедленнее?', 'Напишите мне, пожалуйста',
+    'Мне удобнее переписываться', 'Договорились', 'Отлично!', 'Давайте позже',
+    'Как дела?', 'Всё в порядке', 'Можно вопрос?',
+  ]},
+  { name: 'Магазин и кафе', items: [
+    'Сколько стоит?', 'Можно оплатить картой?', 'Пакет не нужен', 'Чек не нужен',
+    'Можно меню?', 'Счёт, пожалуйста', 'Мне с собой', 'Без сахара, пожалуйста', 'Где здесь туалет?',
+  ]},
+  { name: 'Здоровье', items: [
+    'Мне больно говорить', 'Мне нужно что-то от боли в горле', 'Есть аналог подешевле?',
+    'Мне нужен врач', 'Мне нужна помощь', 'Вызовите скорую помощь, пожалуйста',
+  ]},
+];
+
+let uid = load('uid', 1);
+const nextId = () => { const id = uid++; save('uid', uid); return id; };
+const buildDefaults = () => DEFAULT_CATS.map(c => ({ name: c.name, items: c.items.map(text => ({ id: nextId(), text })) }));
+
+const state = {
+  cats: load('cats', null) || buildDefaults(),
+  favs: load('favs', []),            // [{id, text}]
+  history: load('history', []),      // [{text, t}]
+  settings: Object.assign({ voiceURI: '', rate: 1, pitch: 1, volume: 1, attnSpeak: true, clearAfter: true }, load('settings', {})),
+  tab: load('tab', 'phrases'),
+  cat: load('cat', 0),
+};
+if (!load('cats', null)) save('cats', state.cats);
+if (state.cat >= state.cats.length) state.cat = 0;
+
+const persist = {
+  cats: () => save('cats', state.cats),
+  favs: () => save('favs', state.favs),
+  history: () => save('history', state.history),
+  settings: () => save('settings', state.settings),
+};
+
+/* ---------------- dom ---------------- */
+const $ = s => document.querySelector(s);
+const textEl = $('#text'), speakBtn = $('#speakBtn'), speakLabel = $('#speakLabel');
+const panel = $('#panel'), hint = $('#hint'), favBtn = $('#favBtn');
+const esc = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const norm = s => s.trim().replace(/\s+/g, ' ');
+
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+/* ---------------- speech ---------------- */
+const synth = 'speechSynthesis' in window ? window.speechSynthesis : null;
+let voices = [];
+let playingText = '';
+let speakToken = 0;
+
+function loadVoices() {
+  if (!synth) return;
+  voices = synth.getVoices();
+  renderVoices();
+}
+function pickVoice() {
+  if (!voices.length) return null;
+  const s = voices.find(v => v.voiceURI === state.settings.voiceURI);
+  if (s) return s;
+  const ru = voices.filter(v => /^ru/i.test(v.lang));
+  return ru.find(v => v.localService) || ru[0] || voices.find(v => v.default) || null;
+}
+
+// Chrome cuts utterances after ~15 s and some engines choke on long strings — speak in sentence-sized chunks.
+function chunk(text) {
+  const parts = text.match(/[^.!?…\n]+[.!?…]*|\n+/g) || [text];
+  const out = []; let buf = '';
+  for (let p of parts) {
+    p = p.trim(); if (!p) continue;
+    if ((buf + ' ' + p).length > 180 && buf) { out.push(buf); buf = p; }
+    else buf = buf ? buf + ' ' + p : p;
+  }
+  if (buf) out.push(buf);
+  return out.flatMap(c => {
+    if (c.length <= 220) return [c];
+    const words = c.split(' '), res = []; let b = '';
+    for (const w of words) { if ((b + ' ' + w).length > 180 && b) { res.push(b); b = w; } else b = b ? b + ' ' + w : w; }
+    if (b) res.push(b);
+    return res;
+  });
+}
+
+function speak(raw, { record = true } = {}) {
+  const text = norm(raw || '');
+  if (!text) return;
+  if (!synth) { toast('Этот браузер не умеет озвучивать текст. Откройте в Chrome или Safari.'); return; }
+
+  const token = ++speakToken;
+  // cancel() right before speak() can swallow the next utterance on Android — only cancel when something is queued.
+  if (synth.speaking || synth.pending || synth.paused) synth.cancel();
+  const voice = pickVoice();
+  const pieces = chunk(text);
+  setPlaying(text);
+
+  pieces.forEach((piece, i) => {
+    const u = new SpeechSynthesisUtterance(piece);
+    if (voice) { u.voice = voice; u.lang = voice.lang; } else u.lang = 'ru-RU';
+    u.rate = state.settings.rate; u.pitch = state.settings.pitch; u.volume = state.settings.volume;
+    if (i === pieces.length - 1) {
+      u.onend = u.onerror = () => { if (token === speakToken) setPlaying(''); };
+    }
+    synth.speak(u);
+  });
+  if (synth.paused) synth.resume();
+  watchPlaying(token);
+
+  if (record) addHistory(text);
+}
+function stop() { speakToken++; if (synth) synth.cancel(); setPlaying(''); }
+
+// Some engines never fire onend — poll as a safety net.
+function watchPlaying(token) {
+  let idle = 0;
+  const tick = () => {
+    if (token !== speakToken || !playingText) return;
+    if (!synth.speaking && !synth.pending) { if (++idle > 2) return setPlaying(''); } else idle = 0;
+    setTimeout(tick, 300);
+  };
+  setTimeout(tick, 600);
+}
+
+function setPlaying(text) {
+  playingText = text;
+  const on = !!text;
+  if (navigator.vibrate && on) navigator.vibrate(8);
+  speakBtn.classList.toggle('is-speaking', on);
+  speakLabel.textContent = on ? 'Стоп' : 'Сказать';
+  speakBtn.setAttribute('aria-label', on ? 'Остановить озвучку' : 'Сказать текст из поля');
+  document.querySelectorAll('[data-text]').forEach(el => {
+    el.classList.toggle('is-playing', on && el.dataset.text === text);
+  });
+}
+
+// First touch unlocks audio on iOS/Android and warms up the TTS engine so the first real phrase starts instantly.
+let warmed = false;
+function warmUp() {
+  if (warmed || !synth) return; warmed = true;
+  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; u.rate = 2; synth.speak(u); } catch {}
+  getAudio();
+}
+
+/* ---------------- attention signal ---------------- */
+let audioCtx = null;
+function getAudio() {
+  if (!audioCtx) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) audioCtx = new AC(); }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+function chime() {
+  const ctx = getAudio(); if (!ctx) return 0;
+  const now = ctx.currentTime + 0.02;
+  const master = ctx.createGain(); master.gain.value = 0.9 * state.settings.volume; master.connect(ctx.destination);
+  // Two bright bell strikes (E6 → C6), each with an overtone, decaying like a counter bell.
+  [[1318.5, 0], [1046.5, 0.22]].forEach(([f, at]) => {
+    [[1, 0.6], [2.76, 0.18], [5.4, 0.06]].forEach(([mul, amp]) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = f * mul;
+      g.gain.setValueAtTime(0.0001, now + at);
+      g.gain.exponentialRampToValueAtTime(amp, now + at + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.9);
+      o.connect(g); g.connect(master); o.start(now + at); o.stop(now + at + 1);
+    });
+  });
+  return 520;
+}
+const signalBtn = $('#signalBtn');
+signalBtn.addEventListener('click', () => {
+  warmUp();
+  stop();
+  const wait = chime();
+  if (navigator.vibrate) navigator.vibrate(30);
+  signalBtn.classList.remove('ringing'); void signalBtn.offsetWidth; signalBtn.classList.add('ringing');
+  if (state.settings.attnSpeak) setTimeout(() => speak('Извините!', { record: false }), wait);
+});
+
+/* ---------------- history & favorites ---------------- */
+function addHistory(text) {
+  const h = state.history;
+  const i = h.findIndex(x => x.text === text);
+  if (i !== -1) h.splice(i, 1);
+  h.unshift({ text, t: Date.now() });
+  if (h.length > 100) h.length = 100;
+  persist.history();
+  if (state.tab === 'history') render();
+}
+const isFav = text => state.favs.some(f => f.text === text);
+function toggleFav(text) {
+  text = norm(text); if (!text) return false;
+  const i = state.favs.findIndex(f => f.text === text);
+  if (i === -1) { state.favs.unshift({ id: nextId(), text }); toast('Добавлено в избранное'); }
+  else { state.favs.splice(i, 1); toast('Убрано из избранного'); }
+  persist.favs(); updateFavUI(); render();
+  return i === -1;
+}
+function updateFavUI() {
+  const t = norm(textEl.value);
+  const on = !!t && isFav(t);
+  favBtn.setAttribute('aria-pressed', String(on));
+  favBtn.setAttribute('aria-label', on ? 'Убрать из избранного' : 'Сохранить в избранное');
+  favBtn.querySelector('svg').style.fill = on ? 'currentColor' : 'none';
+  $('#favCount').textContent = state.favs.length ? state.favs.length : '';
+}
+
+/* ---------------- render ---------------- */
+const starSvg = '<svg class="i star" aria-hidden="true"><use href="#i-star"/></svg>';
+function phraseBtn(text, kind, ref) {
+  const short = text.length <= 8 ? ' short' : '';
+  const playing = text === playingText ? ' is-playing' : '';
+  const star = kind !== 'fav' && isFav(text) ? starSvg : '';
+  return `<button class="phrase${short}${playing}" type="button" data-text="${esc(text)}" data-kind="${kind}" data-ref="${ref}">${star}<span>${esc(text)}</span></button>`;
+}
+
+function when(t) {
+  const d = new Date(t), now = new Date();
+  const hm = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return hm;
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return 'вчера, ' + hm;
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + ', ' + hm;
+}
+
+function render() {
+  document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === state.tab)));
+  panel.setAttribute('aria-labelledby', 'tab-' + state.tab);
+
+  if (state.tab === 'phrases') {
+    const cat = state.cats[state.cat];
+    panel.innerHTML =
+      `<div class="cats" role="group" aria-label="Категории">${state.cats.map((c, i) =>
+        `<button class="chip" type="button" data-cat="${i}" aria-pressed="${i === state.cat}">${esc(c.name)}</button>`).join('')}</div>` +
+      `<div class="board">${cat.items.map(p => phraseBtn(p.text, 'phrase', p.id)).join('')}` +
+      `<button class="phrase add" type="button" data-add="1"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>Добавить фразу</button></div>` +
+      `<p class="board-hint">Нажмите — прозвучит. Удерживайте — изменить, в избранное или удалить.</p>`;
+    const active = panel.querySelector('.chip[aria-pressed="true"]');
+    if (active) { const box = active.parentElement; const l = active.offsetLeft - 16; if (l < box.scrollLeft || l + active.offsetWidth > box.scrollLeft + box.clientWidth) box.scrollLeft = l; }
+  } else if (state.tab === 'favs') {
+    panel.innerHTML = state.favs.length
+      ? `<div class="board">${state.favs.map(f => phraseBtn(f.text, 'fav', f.id)).join('')}</div>`
+      : `<div class="empty"><strong>Здесь будут ваши частые фразы</strong>Напишите текст в поле и нажмите звёздочку, или удерживайте любую фразу и выберите «В избранное».</div>`;
+  } else {
+    panel.innerHTML = state.history.length
+      ? `<ul class="list">${state.history.map((h, i) => `<li class="row${h.text === playingText ? ' is-playing' : ''}" data-text="${esc(h.text)}">
+          <button class="row-main" type="button" data-kind="history" data-ref="${i}" data-text="${esc(h.text)}"><span class="t">${esc(h.text)}</span><span class="when">${when(h.t)}</span></button>
+          <button class="iconbtn" type="button" data-hfav="${i}" aria-pressed="${isFav(h.text)}" aria-label="${isFav(h.text) ? 'Убрать из избранного' : 'В избранное'}"><svg class="i" aria-hidden="true" style="fill:${isFav(h.text) ? 'currentColor' : 'none'}"><use href="#i-star"/></svg></button>
+        </li>`).join('')}</ul>
+        <div class="list-foot"><button class="textbtn danger" type="button" data-clearhist="1"><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg>Очистить историю</button></div>`
+      : `<div class="empty"><strong>Пока ничего не сказано</strong>Всё, что вы озвучите, появится здесь. Нажмите на строку, чтобы повторить.</div>`;
+  }
+}
+
+/* ---------------- interactions ---------------- */
+// Destructive actions ask for a second tap instead of a blocking dialog.
+function confirmTap(btn, label) {
+  if (btn.dataset.armed) { clearTimeout(+btn.dataset.armed); delete btn.dataset.armed; return true; }
+  const orig = btn.innerHTML;
+  btn.textContent = label; btn.classList.add('armed');
+  btn.dataset.armed = setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('armed'); delete btn.dataset.armed; }, 3000);
+  return false;
+}
+function setHint(msg) { hint.textContent = msg; }
+
+function speakField() {
+  const t = norm(textEl.value);
+  if (!t) { textEl.focus(); setHint('Сначала напишите текст или нажмите на готовую фразу ниже.'); return; }
+  speak(t);
+  showLast(t);
+  if (state.settings.clearAfter) { textEl.value = ''; save('draft', ''); updateFavUI(); }
+}
+// Button: stops if speaking and the field holds nothing new; otherwise speaks the field (interrupting).
+speakBtn.addEventListener('click', () => {
+  warmUp();
+  const t = norm(textEl.value);
+  if (playingText && (!t || t === playingText)) return stop();
+  speakField();
+});
+// Enter always speaks what is typed, even over a phrase that is still playing.
+textEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); warmUp(); speakField(); }
+});
+// Keep focus (and the phone keyboard) in the field when tapping composer buttons.
+document.querySelectorAll('.composer-actions button').forEach(b =>
+  b.addEventListener('pointerdown', e => { if (document.activeElement === textEl) e.preventDefault(); }));
+
+const lastEl = $('#last'), lastText = $('#lastText');
+function showLast(t) { lastText.textContent = t; lastEl.hidden = false; }
+$('#repeatBtn').addEventListener('click', () => speak(lastText.textContent));
+lastText.addEventListener('click', () => {
+  textEl.value = lastText.textContent; save('draft', textEl.value); updateFavUI(); textEl.focus();
+});
+textEl.addEventListener('input', () => { setHint(''); updateFavUI(); save('draft', textEl.value); });
+
+$('#clearBtn').addEventListener('click', () => { textEl.value = ''; save('draft', ''); updateFavUI(); textEl.focus(); });
+favBtn.addEventListener('click', () => {
+  const t = norm(textEl.value);
+  if (!t) { textEl.focus(); setHint('Напишите фразу, чтобы сохранить её в избранное.'); return; }
+  toggleFav(t);
+});
+
+document.querySelector('.tabs').addEventListener('click', e => {
+  const b = e.target.closest('.tab'); if (!b) return;
+  state.tab = b.dataset.tab; save('tab', state.tab); render();
+});
+
+// Tap = speak. Long press (or right click) = actions for that phrase.
+let pressTimer = null, pressed = null, longFired = false, startXY = null;
+panel.addEventListener('pointerdown', e => {
+  const el = e.target.closest('[data-kind]'); if (!el) return;
+  warmUp();
+  pressed = el; longFired = false; startXY = [e.clientX, e.clientY];
+  clearTimeout(pressTimer);
+  pressTimer = setTimeout(() => { longFired = true; if (navigator.vibrate) navigator.vibrate(15); openPhraseSheet(el); }, 480);
+});
+const cancelPress = () => { clearTimeout(pressTimer); };
+panel.addEventListener('pointerup', cancelPress);
+panel.addEventListener('pointercancel', cancelPress);
+panel.addEventListener('pointermove', e => {
+  if (startXY && Math.hypot(e.clientX - startXY[0], e.clientY - startXY[1]) > 10) cancelPress();
+});
+panel.addEventListener('contextmenu', e => {
+  const el = e.target.closest('[data-kind]'); if (!el) return;
+  e.preventDefault(); if (!longFired) { longFired = true; openPhraseSheet(el); }
+});
+
+panel.addEventListener('click', e => {
+  const chip = e.target.closest('[data-cat]');
+  if (chip) { state.cat = +chip.dataset.cat; save('cat', state.cat); render(); return; }
+
+  if (e.target.closest('[data-add]')) {
+    const t = norm(textEl.value);
+    if (!t) { textEl.focus(); setHint(`Напишите фразу в поле и нажмите «Добавить фразу» — она появится в «${state.cats[state.cat].name}».`); return; }
+    const items = state.cats[state.cat].items;
+    if (items.some(p => p.text === t)) { toast('Такая фраза уже есть'); return; }
+    items.push({ id: nextId(), text: t }); persist.cats(); render(); toast('Фраза добавлена');
+    return;
+  }
+
+  const hf = e.target.closest('[data-hfav]');
+  if (hf) { toggleFav(state.history[+hf.dataset.hfav].text); return; }
+
+  const ch = e.target.closest('[data-clearhist]');
+  if (ch) {
+    if (confirmTap(ch, 'Нажмите ещё раз, чтобы очистить')) { state.history = []; persist.history(); render(); toast('История очищена'); }
+    return;
+  }
+
+  const el = e.target.closest('[data-kind]');
+  if (!el) return;
+  if (longFired) { longFired = false; return; }
+  if (el.dataset.text === playingText) return stop();
+  speak(el.dataset.text);
+});
+
+/* ---------------- phrase sheet ---------------- */
+const phraseSheet = $('#phraseSheet');
+let sheetTarget = null;
+function openPhraseSheet(el) {
+  sheetTarget = { kind: el.dataset.kind, ref: el.dataset.ref, text: el.dataset.text };
+  $('#phraseSheetText').textContent = sheetTarget.text;
+  $('#phraseSheetFavLabel').textContent = isFav(sheetTarget.text) ? 'Убрать из избранного' : 'В избранное';
+  const delBtn = phraseSheet.querySelector('[data-act="delete"]');
+  delBtn.hidden = sheetTarget.kind === 'fav';
+  $('#phraseSheetDelLabel').textContent = sheetTarget.kind === 'history' ? 'Удалить из истории' : 'Удалить фразу';
+  phraseSheet.showModal();
+}
+phraseSheet.addEventListener('click', e => {
+  if (e.target === phraseSheet) return phraseSheet.close();
+  const b = e.target.closest('[data-act]'); if (!b || !sheetTarget) return;
+  const { kind, ref, text } = sheetTarget;
+  const act = b.dataset.act;
+  if (act === 'toField') {
+    textEl.value = text; save('draft', text); updateFavUI();
+    phraseSheet.close(); textEl.focus(); textEl.setSelectionRange(text.length, text.length);
+    setHint('Поправьте текст и нажмите «Сказать».');
+    return;
+  }
+  if (act === 'fav') toggleFav(text);
+  if (act === 'delete') {
+    if (kind === 'phrase') {
+      const items = state.cats[state.cat].items;
+      const i = items.findIndex(p => String(p.id) === ref);
+      if (i !== -1) { items.splice(i, 1); persist.cats(); toast('Фраза удалена'); }
+    } else if (kind === 'history') {
+      state.history.splice(+ref, 1); persist.history();
+    }
+    render();
+  }
+  phraseSheet.close();
+});
+
+/* ---------------- settings ---------------- */
+const settingsSheet = $('#settingsSheet');
+const voiceSel = $('#voiceSel');
+const fmt = v => '×' + Number(v).toFixed(2).replace(/0$/, '').replace('.', ',');
+
+function renderVoices() {
+  if (!synth) {
+    voiceSel.innerHTML = '<option>Недоступно в этом браузере</option>'; voiceSel.disabled = true;
+    showNotice('Этот браузер не умеет озвучивать текст. Откройте приложение в Chrome (Android) или Safari (iPhone).');
+    return;
+  }
+  const ru = voices.filter(v => /^ru/i.test(v.lang));
+  const other = voices.filter(v => !/^ru/i.test(v.lang));
+  const current = pickVoice();
+  const opt = v => `<option value="${esc(v.voiceURI)}"${current && v.voiceURI === current.voiceURI ? ' selected' : ''}>${esc(v.name)}${v.localService ? ' · офлайн' : ' · онлайн'}</option>`;
+  voiceSel.innerHTML =
+    (ru.length ? `<optgroup label="Русские">${ru.map(opt).join('')}</optgroup>` : '') +
+    (other.length ? `<optgroup label="Другие языки">${other.map(opt).join('')}</optgroup>` : '');
+  if (!voices.length) voiceSel.innerHTML = '<option>Голоса загружаются…</option>';
+  showNotice(voices.length && !ru.length
+    ? 'На телефоне нет русского голоса. Android: Настройки → Специальные возможности → Синтез речи → Google → скачать «Русский». iPhone: Настройки → Универсальный доступ → Устный контент → Голоса → Русский.'
+    : '');
+}
+function showNotice(msg) { const n = $('#voiceNotice'); n.textContent = msg; n.hidden = !msg; }
+
+function syncSettingsUI() {
+  const s = state.settings;
+  $('#rate').value = s.rate; $('#rateOut').textContent = fmt(s.rate);
+  $('#pitch').value = s.pitch; $('#pitchOut').textContent = fmt(s.pitch);
+  $('#volume').value = s.volume; $('#volOut').textContent = Math.round(s.volume * 100) + '%';
+  $('#attnSpeak').checked = s.attnSpeak; $('#clearAfter').checked = s.clearAfter;
+}
+$('#settingsBtn').addEventListener('click', () => { warmUp(); loadVoices(); syncSettingsUI(); settingsSheet.showModal(); });
+settingsSheet.addEventListener('click', e => { if (e.target === settingsSheet) settingsSheet.close(); });
+voiceSel.addEventListener('change', () => { state.settings.voiceURI = voiceSel.value; persist.settings(); speak('Так звучит этот голос', { record: false }); });
+[['rate', 'rateOut', fmt], ['pitch', 'pitchOut', fmt], ['volume', 'volOut', v => Math.round(v * 100) + '%']].forEach(([id, out, f]) => {
+  const el = $('#' + id);
+  el.addEventListener('input', () => { state.settings[id] = +el.value; $('#' + out).textContent = f(el.value); });
+  el.addEventListener('change', () => persist.settings());
+});
+$('#attnSpeak').addEventListener('change', e => { state.settings.attnSpeak = e.target.checked; persist.settings(); });
+$('#clearAfter').addEventListener('change', e => { state.settings.clearAfter = e.target.checked; persist.settings(); });
+$('#testVoice').addEventListener('click', () => speak('Здравствуйте! У меня пропал голос, поэтому я говорю через телефон.', { record: false }));
+$('#resetPhrases').addEventListener('click', e => {
+  if (!confirmTap(e.currentTarget, 'Ваши фразы удалятся. Нажмите ещё раз')) return;
+  state.cats = buildDefaults(); state.cat = 0; persist.cats(); save('cat', 0); render(); toast('Фразы восстановлены');
+});
+
+/* ---------------- install / offline ---------------- */
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; $('#installBtn').hidden = false; });
+$('#installBtn').addEventListener('click', async () => {
+  if (!deferredInstall) return;
+  deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall = null; $('#installBtn').hidden = true;
+});
+if ('serviceWorker' in navigator && window.isSecureContext && window.top === window.self) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+
+/* ---------------- boot ---------------- */
+if (synth) { loadVoices(); synth.addEventListener?.('voiceschanged', loadVoices); if (!('addEventListener' in synth)) synth.onvoiceschanged = loadVoices; }
+else renderVoices();
+textEl.value = load('draft', '');
+updateFavUI();
+render();
+document.addEventListener('pointerdown', warmUp, { once: true, capture: true });
+})();
+</script>
+</body>
+</html>
