@@ -1,6 +1,6 @@
 // Offline cache: app shell is tiny, so cache everything on install and serve cache-first.
-const CACHE = 'golos-v2';
-const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
+const CACHE = 'golos-v3';
+const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './speller.js', './ru-words.dat'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));

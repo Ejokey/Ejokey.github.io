@@ -487,7 +487,7 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 4px 0 20px; }
     <div class="field">
       <label for="fixMode">Исправление опечаток</label>
       <select id="fixMode">
-        <option value="local">Базовое: пробелы и сокращения (без интернета)</option>
+        <option value="local">Без интернета: словарь, раскладка, сокращения</option>
         <option value="claude">ИИ: Claude Haiku</option>
         <option value="openai">ИИ: OpenAI-совместимый сервис</option>
         <option value="off">Выключено</option>
@@ -527,6 +527,7 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 4px 0 20px; }
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+<script src="speller.js"></script>
 <script>
 (() => {
 'use strict';
@@ -888,7 +889,7 @@ panel.addEventListener('click', e => {
     if (!t) { textEl.focus(); setHint(`Напишите фразу в поле и нажмите «Добавить фразу» — она появится в «${state.cats[state.cat].name}».`); return; }
     const items = state.cats[state.cat].items;
     if (items.some(p => p.text === t)) { toast('Такая фраза уже есть'); return; }
-    items.push({ id: nextId(), text: t }); persist.cats(); render(); toast('Фраза добавлена');
+    items.push({ id: nextId(), text: t }); persist.cats(); learnWords(t); render(); toast('Фраза добавлена');
     return;
   }
 
@@ -959,7 +960,26 @@ function quickFix(t) {
   let s = t.replace(/\s+/g, ' ').trim();
   s = s.replace(/\s+([,.!?;:…])/g, '$1').replace(/([,!?;:])(?=[\p{L}\d])/gu, '$1 ').replace(/\.(?=\p{Lu})/gu, '. ');
   s = s.replace(SH_RE, m => { const r = SHORTHAND[m.toLowerCase()]; return m[0] === m[0].toUpperCase() && m[0] !== m[0].toLowerCase() ? r[0].toUpperCase() + r.slice(1) : r; });
+  if (window.Speller && Speller.ready) s = Speller.fix(s);
   return s;
+}
+
+// Offline dictionary: loaded in the background, cached by the service worker for offline use.
+const speller = window.Speller;
+function learnWords(text) {
+  if (!speller) return;
+  speller.learn(text);
+  const list = [...speller.learned].slice(-2000);
+  save('learned', list);
+}
+if (speller) {
+  speller.learn(load('learned', []).join(' '));
+  state.cats.forEach(c => c.items.forEach(p => speller.learn(p.text)));
+  const loadDict = () => fetch('ru-words.dat').then(r => r.ok ? r.text() : Promise.reject(r.status))
+    .then(t => { speller.load(t); fixCache.clear(); scheduleFix(); })
+    .catch(() => {});
+  if (document.readyState === 'complete') setTimeout(loadDict, 300);
+  else window.addEventListener('load', () => setTimeout(loadDict, 300));
 }
 
 const FIX_PROMPT = 'Ты исправляешь реплики, которые человек без голоса быстро набирает на телефоне. Текст сразу озвучит синтезатор речи. ' +
@@ -1083,7 +1103,7 @@ function showFix(orig, fixed, pending) {
 }
 function hideFix() { clearTimeout(fixTimer); const b = $('#fix'); b.hidden = true; b.classList.remove('pending'); }
 $('#fixUndo').addEventListener('pointerdown', e => { if (document.activeElement === textEl) e.preventDefault(); });
-$('#fixUndo').addEventListener('click', () => { ignoreFixFor = norm(textEl.value); hideFix(); });
+$('#fixUndo').addEventListener('click', () => { ignoreFixFor = norm(textEl.value); learnWords(ignoreFixFor); hideFix(); });
 
 /* ---------------- settings ---------------- */
 const settingsSheet = $('#settingsSheet');
@@ -1120,8 +1140,8 @@ function syncSettingsUI() {
   syncFixUI();
 }
 const FIX_HELP = {
-  local: 'Без интернета: убирает лишние пробелы и раскрывает сокращения вроде «спс» и «щас». Опечатки в словах не исправляет.',
-  claude: 'Исправляет опечатки, раскладку и пунктуацию, пока вы печатаете. Нужен API-ключ с console.anthropic.com: подписка Claude не подходит. Без интернета работает базовое исправление.',
+  local: 'Работает без интернета. Исправляет опечатки по орфографическому словарю со всеми формами слов, текст в английской раскладке и пропущенные пробелы, раскрывает «спс» и «щас». Слова, которые вы оставили «Как написано», приложение запоминает.',
+  claude: 'Исправляет опечатки, раскладку и пунктуацию с учётом смысла фразы, пока вы печатаете. Нужен API-ключ с console.anthropic.com: подписка Claude не подходит. Без интернета работает словарь.',
   openai: 'Любой сервис с API как у OpenAI: Groq, OpenRouter, OpenAI, DeepSeek. Укажите адрес, модель и ключ.',
   off: 'Текст звучит ровно так, как набран.',
 };
