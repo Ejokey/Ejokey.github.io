@@ -1,5 +1,5 @@
 // Offline cache: app shell is tiny, so cache everything on install and serve cache-first.
-const CACHE = 'golos-v3';
+const CACHE = 'golos-v4';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './speller.js', './ru-words.dat'];
 
 self.addEventListener('install', e => {

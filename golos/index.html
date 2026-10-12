@@ -191,6 +191,22 @@ svg.i { width: 22px; height: 22px; flex: none; fill: none; stroke: currentColor;
 }
 .last-text:hover { background: var(--surface); }
 .last .textbtn { flex: none; color: var(--primary); }
+.sound {
+  margin: 8px 0 0; padding: 12px 14px 14px; border-radius: var(--r-l);
+  background: color-mix(in oklch, var(--signal) 20%, var(--bg));
+  border: 1px solid color-mix(in oklch, var(--signal) 55%, var(--bg));
+}
+.sound.ok { background: var(--primary-soft); border-color: color-mix(in oklch, var(--primary) 35%, var(--bg)); }
+.sound-head { display: flex; align-items: center; gap: 8px; }
+.sound-head strong { flex: 1; font-size: 17px; }
+.sound-head > svg { color: var(--signal-ink); }
+.sound.ok .sound-head > svg { color: var(--primary-soft-ink); }
+.iconbtn.sm { width: 40px; height: 40px; margin: -8px -8px -8px 0; }
+.sound-text { margin: 6px 0 10px; font-size: 15px; }
+.sound-text:empty { display: none; }
+.sound-tips { margin: 0 0 12px; padding-left: 20px; display: grid; gap: 6px; font-size: 15px; }
+.sound .btn { background: var(--bg); }
+.sound .btn.primary { background: var(--primary); }
 .fix {
   display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
   margin: 8px 4px 0; padding: 10px 12px; border-radius: var(--r-m);
@@ -414,6 +430,16 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 4px 0 20px; }
       </button>
     </div>
   </section>
+  <section class="sound" id="sound" hidden aria-live="polite" aria-labelledby="soundTitle">
+    <div class="sound-head">
+      <svg class="i" aria-hidden="true"><use href="#i-play"/></svg>
+      <strong id="soundTitle"></strong>
+      <button class="iconbtn sm" id="soundClose" type="button" aria-label="Скрыть"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+    </div>
+    <p class="sound-text" id="soundText"></p>
+    <ul class="sound-tips" id="soundTips" hidden></ul>
+    <div class="row-btns" id="soundBtns"></div>
+  </section>
   <div class="fix" id="fix" hidden aria-live="polite">
     <span class="fix-lbl">Скажу:</span>
     <span class="fix-text" id="fixText"></span>
@@ -474,6 +500,7 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 4px 0 20px; }
     </div>
     <div class="row-btns" style="margin-bottom:20px">
       <button class="btn" type="button" id="testVoice">Проверить голос</button>
+      <button class="btn" type="button" id="soundCheckBtn">Проверка звука</button>
     </div>
     <p class="help" style="margin:-8px 0 20px">Тихо? Прибавьте громкость кнопками телефона во время озвучки: она идёт через громкость мультимедиа.</p>
 
@@ -633,7 +660,7 @@ function chunk(text) {
   });
 }
 
-function speak(raw, { record = true } = {}) {
+function speak(raw, { record = true, retry = 0 } = {}) {
   const text = norm(raw || '');
   if (!text) return;
   if (!synth) { toast('Этот браузер не умеет озвучивать текст. Откройте в Chrome или Safari.'); return; }
@@ -645,17 +672,26 @@ function speak(raw, { record = true } = {}) {
   const pieces = chunk(text);
   setPlaying(text);
 
+  let started = false;
   pieces.forEach((piece, i) => {
     const u = new SpeechSynthesisUtterance(piece);
     if (voice) { u.voice = voice; u.lang = voice.lang; } else u.lang = 'ru-RU';
     u.rate = state.settings.rate; u.pitch = state.settings.pitch; u.volume = state.settings.volume;
+    if (i === 0) u.onstart = () => { started = true; };
     if (i === pieces.length - 1) {
-      u.onend = u.onerror = () => { if (token === speakToken) setPlaying(''); };
+      u.onend = () => { started = true; if (token === speakToken) setPlaying(''); };
+      u.onerror = e => { if (token === speakToken) setPlaying(''); if (e && /synthesis|audio|network/.test(e.error || '')) soundProblem('stuck'); };
     }
     synth.speak(u);
   });
   if (synth.paused) synth.resume();
   watchPlaying(token);
+  // The engine sometimes hangs silently (Android after sleep, a blocked audio output). Retry once, then tell the user.
+  setTimeout(() => {
+    if (token !== speakToken || started || synth.speaking) return;
+    if (retry === 0) { synth.cancel(); speak(text, { record: false, retry: 1 }); }
+    else { setPlaying(''); soundProblem('stuck'); }
+  }, 2000);
 
   if (record) addHistory(text);
 }
@@ -688,6 +724,8 @@ function setPlaying(text) {
 let warmed = false;
 function warmUp() {
   if (warmed || !synth) return; warmed = true;
+  // Safari 17+: treat our sound as media playback so the ring/silent switch does not mute it.
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
   try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; u.rate = 2; synth.speak(u); } catch {}
   getAudio();
 }
@@ -945,6 +983,70 @@ phraseSheet.addEventListener('click', e => {
   }
   phraseSheet.close();
 });
+
+/* ---------------- sound check ---------------- */
+// A web page cannot read the phone volume or the silent switch, so we ask the person and watch for speech that never starts.
+const soundEl = $('#sound');
+const PLATFORM = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 'ios'
+  : /android/i.test(navigator.userAgent) ? 'android' : 'desktop';
+const SOUND_TIPS = {
+  android: [
+    'Прибавьте громкость кнопками сбоку, пока идёт фраза: нужна громкость мультимедиа, а не звонка.',
+    'Проверьте, не подключены ли Bluetooth-наушники или колонка: звук может уходить туда.',
+    'Если тишина всегда: Настройки → Специальные возможности → Синтез речи → выберите Google и скачайте русский язык.',
+  ],
+  ios: [
+    'Прибавьте громкость кнопками сбоку, пока идёт фраза.',
+    'Выключите беззвучный режим: переключатель или кнопка действия на боку iPhone.',
+    'Проверьте, не подключены ли AirPods или колонка: Пункт управления → значок AirPlay.',
+  ],
+  desktop: [
+    'Проверьте громкость и устройство вывода звука на компьютере.',
+    'Проверьте, не выключен ли звук у вкладки браузера.',
+  ],
+};
+const SOUND_PHRASE = 'Проверка звука. Если вы меня слышите, нажмите «Да».';
+function showSound(kind) {
+  const title = $('#soundTitle'), text = $('#soundText'), tips = $('#soundTips'), btns = $('#soundBtns');
+  soundEl.classList.toggle('ok', kind === 'offer' || kind === 'ask');
+  tips.hidden = true; tips.innerHTML = '';
+  if (kind === 'offer') {
+    title.textContent = 'Проверьте звук';
+    text.textContent = 'Скажу короткую фразу. Так вы будете знать, что собеседник вас услышит.';
+    btns.innerHTML = '<button class="btn primary" type="button" data-snd="test">Проверить</button>';
+  } else if (kind === 'ask') {
+    title.textContent = 'Было слышно?';
+    text.textContent = 'Звучит: «' + SOUND_PHRASE + '»';
+    btns.innerHTML = '<button class="btn primary" type="button" data-snd="yes">Да, слышно</button><button class="btn" type="button" data-snd="no">Нет</button><button class="btn" type="button" data-snd="again">Ещё раз</button>';
+  } else {
+    title.textContent = kind === 'stuck' ? 'Озвучка не запустилась' : 'Звука нет';
+    text.textContent = kind === 'stuck' ? 'Собеседник мог ничего не услышать. Проверьте:' : 'Проверьте по порядку:';
+    const list = [...SOUND_TIPS[PLATFORM]];
+    const vol = state.settings.volume;
+    let html = list.map(t => `<li>${esc(t)}</li>`).join('');
+    if (vol < 0.6) html = `<li>Громкость в приложении всего ${Math.round(vol * 100)}%. <button class="textbtn" type="button" data-snd="vol">Сделать 100%</button></li>` + html;
+    tips.innerHTML = html; tips.hidden = false;
+    btns.innerHTML = '<button class="btn primary" type="button" data-snd="test">Проверить ещё раз</button>';
+  }
+  soundEl.hidden = false;
+}
+function soundProblem(kind) { showSound(kind); }
+function runSoundTest() {
+  warmUp();
+  showSound('ask');
+  speak(SOUND_PHRASE, { record: false });
+}
+soundEl.addEventListener('click', e => {
+  const b = e.target.closest('[data-snd]'); if (!b) return;
+  const act = b.dataset.snd;
+  if (act === 'test' || act === 'again') runSoundTest();
+  if (act === 'yes') { stop(); save('soundOk', Date.now()); soundEl.hidden = true; toast('Звук работает'); }
+  if (act === 'no') { stop(); showSound('no'); }
+  if (act === 'vol') { state.settings.volume = 1; persist.settings(); showSound('no'); toast('Громкость в приложении: 100%'); }
+});
+$('#soundClose').addEventListener('click', () => { soundEl.hidden = true; save('soundOffered', true); });
+$('#soundCheckBtn').addEventListener('click', () => { settingsSheet.close(); runSoundTest(); });
+if (!load('soundOk', 0) && !load('soundOffered', false)) showSound('offer');
 
 /* ---------------- typo correction ---------------- */
 // Chat shorthand that TTS reads badly. Keys are matched as whole words, case-insensitive.
