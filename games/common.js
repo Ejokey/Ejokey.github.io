@@ -92,6 +92,7 @@
 
   /* ---------- screen wake lock while a match runs ---------- */
   let lock = null;
+  G.dpr = () => Math.min(window.devicePixelRatio || 1, 2);
   G.wake = async on => {
     try {
       if (on && !lock && navigator.wakeLock) { lock = await navigator.wakeLock.request('screen'); lock.addEventListener('release', () => { lock = null; }); }
@@ -101,12 +102,28 @@
 
   /* ---------- canvas helpers ---------- */
   G.fit = canvas => {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const dpr = G.dpr();
     const w = canvas.clientWidth, h = canvas.clientHeight;
     canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
     const c = canvas.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0);
     return { w, h, dpr, ctx: c };
   };
+  // Static backgrounds are painted once into an offscreen canvas (with a 20px margin for screen shake)
+  // and blitted every frame: on phones the per-pixel fill of gradients is what costs frame time.
+  const layers = new Map();
+  G.layer = (key, w, h, paint) => {
+    const id = key + '|' + w + 'x' + h;
+    let c = layers.get(id);
+    if (!c) {
+      const dpr = G.dpr(); c = document.createElement('canvas');
+      c.width = Math.round((w + 40) * dpr); c.height = Math.round((h + 40) * dpr);
+      const x = c.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 20 * dpr, 20 * dpr); paint(x);
+      if (layers.size > 12) layers.clear();
+      layers.set(id, c);
+    }
+    return c;
+  };
+  G.blit = (ctx, layer, w, h) => ctx.drawImage(layer, -20, -20, w + 40, h + 40);
   G.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // Particles: cheap squares/circles with gravity and fade.

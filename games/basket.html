@@ -227,16 +227,18 @@ G.loop(dt => {
 });
 
 /* ---------- render ---------- */
-function draw() {
-  ctx.save(); ctx.translate(shake.x, shake.y);
+function paintCourt(ctx, fire) {
   const bg = ctx.createLinearGradient(0, 0, 0, H);
   bg.addColorStop(0, fire ? '#3a1222' : '#1b1240'); bg.addColorStop(0.55, fire ? '#5a1b1b' : '#2a1a5e'); bg.addColorStop(0.56, '#c9853f'); bg.addColorStop(1, '#a8682e');
   ctx.fillStyle = bg; ctx.fillRect(-20, -20, W + 40, H + 40);
-  // court boards
   ctx.strokeStyle = 'rgba(0,0,0,.08)'; ctx.lineWidth = 2;
   for (let i = 0; i < 12; i++) { const y = H * 0.56 + (H * 0.44) * Math.pow(i / 12, 1.5); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
   ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 4;
   ctx.beginPath(); ctx.ellipse(W / 2, H * 0.98, W * 0.42, H * 0.16, 0, Math.PI, 0); ctx.stroke();
+}
+function draw() {
+  ctx.save(); ctx.translate(shake.x, shake.y);
+  G.blit(ctx, G.layer(fire ? 'court-fire' : 'court', W, H, x => paintCourt(x, fire)), W, H);
   // backboard
   const bw = hoop.rw * 2.3, bh = hoop.rw * 1.45, bx = hoop.x - bw / 2, by = hoop.y - bh * 0.95;
   ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.fillRect(bx, by, bw, bh);

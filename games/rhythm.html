@@ -440,7 +440,7 @@ addEventListener('resize', layout);
 const hitY = () => H * 0.84;
 const now = () => ac ? ac.currentTime - t0 - latency / 1000 : 0;
 
-let source = null;
+let source = null, songGen = 0;
 let playMode = G.get('rhythm.play', 'notes');
 const surf = { lane: 1, x: 1 };
 // Surf: the 4 lanes fold into 3, every block still sits on a hit in the music; obstacles fill free lanes.
@@ -448,13 +448,13 @@ function toSurf(notes, diff, seed) {
   const r = rng(seed), map = [0, 1, 1, 2], out = [];
   for (const n of notes) {
     const lane = map[n.lane];
-    if (out.some(o => Math.abs(o.t - n.t) < 0.01)) continue;   // one ship, one block at a time
+    if (out.some(o => Math.abs(o.t - n.t) < 0.01 || (o.lane === lane && Math.abs(o.t - n.t) < 0.1))) continue;   // one ship, one block at a time; no doubled blocks
     out.push({ t: n.t, lane, color: n.lane, hit: null });
   }
   const p = [0, 0.2, 0.34][diff];
   for (const b of out.slice()) {
     if (r() >= p) continue;
-    const free = [0, 1, 2].filter(l => !out.some(o => Math.abs(o.t - b.t) < 0.01 && o.lane === l));
+    const free = [0, 1, 2].filter(l => !out.some(o => Math.abs(o.t - b.t) < (o.bad ? 0.01 : 0.3) && o.lane === l));
     if (free.length > 1) out.push({ t: b.t, lane: free[Math.floor(r() * free.length)], bad: true, hit: null });
   }
   return out.sort((a, b) => a.t - b.t);
@@ -465,6 +465,8 @@ function density(notes, length) {
   const mx = Math.max(1, ...d); return d.map(v => v / mx);
 }
 async function startSong() {
+  songGen++;
+  if (ac) stopSong();
   audio();
   if (song.custom) {
     let buf = decoded.get(song.trackId);
@@ -493,7 +495,16 @@ function schedule() {
   const horizon = ac.currentTime + 0.15;
   while (evIdx < chart.ev.length && t0 + chart.ev[evIdx].t < horizon) { const e = chart.ev[evIdx++]; play(e, Math.max(ac.currentTime, t0 + e.t), song.style); }
 }
-function stopSong() { clearInterval(schedTimer); if (source) { try { source.stop(ac.currentTime + 0.16); } catch {} source = null; } if (master) { const g = master.gain; g.cancelScheduledValues(ac.currentTime); g.setValueAtTime(g.value, ac.currentTime); g.linearRampToValueAtTime(0, ac.currentTime + 0.15); setTimeout(() => { master.disconnect(); master = null; ac.close(); ac = null; }, 250); } }
+// Detach the old audio graph at once and fade it out on its own, so a new song can start immediately on a fresh context.
+function stopSong() {
+  clearInterval(schedTimer);
+  const oldAc = ac, oldMaster = master, oldSrc = source;
+  ac = null; master = null; source = null; drive = null;
+  if (!oldAc) return;
+  try { const g = oldMaster.gain, t = oldAc.currentTime; g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(0, t + 0.15); } catch {}
+  try { if (oldSrc) oldSrc.stop(oldAc.currentTime + 0.16); } catch {}
+  setTimeout(() => { try { oldMaster.disconnect(); oldAc.close(); } catch {} }, 250);
+}
 
 /* ---------- input ---------- */
 function surfMove(d) { const l = Math.max(0, Math.min(2, surf.lane + d)); if (l !== surf.lane) { surf.lane = l; G.buzz(6); } }
@@ -579,7 +590,7 @@ function drawSurf(t) {
   ctx.restore();
   ctx.fillStyle = '#120c26'; ctx.fillRect(0, y0, W, H - y0);
   // road in strips, striped by beats so the floor itself moves in time
-  const steps = 48;
+  const steps = 30;
   for (let i = steps; i > 0; i--) {
     const za = -0.3 + (zmax + 0.3) * i / steps, zb = -0.3 + (zmax + 0.3) * (i - 1) / steps;
     const a = surfProj(za), b = surfProj(zb);
@@ -617,15 +628,20 @@ function drawSurf(t) {
   ctx.fillStyle = song.color; ctx.beginPath(); ctx.moveTo(0, -w * 0.55); ctx.lineTo(w * 0.22, w * 0.05); ctx.lineTo(-w * 0.22, w * 0.05); ctx.closePath(); ctx.fill();
   ctx.restore();
 }
+function paintStage(ctx, fever, lanes) {
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#0e0a20'); bg.addColorStop(1, fever ? '#3b1430' : '#1d1444');
+  ctx.fillStyle = bg; ctx.fillRect(-20, -20, W + 40, H + 40);
+  if (lanes) for (let l = 0; l < 4; l++) { ctx.fillStyle = l % 2 ? 'rgba(255,255,255,.025)' : 'rgba(255,255,255,.05)'; ctx.fillRect(l * W / 4, -20, W / 4, H + 40); }
+}
 function draw() {
   ctx.save(); ctx.translate(shake.x, shake.y);
   const t = state === 'play' || state === 'paused' ? now() : 0;
   // background pulses with the beat
   const beatPhase = chart && state === 'play' ? 1 - ((t / chart.beat) % 1 + 1) % 1 : 0;
-  const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, '#0e0a20'); bg.addColorStop(1, fever ? '#3b1430' : '#1d1444');
-  ctx.fillStyle = bg; ctx.fillRect(-20, -20, W + 40, H + 40);
-  ctx.globalAlpha = 0.12 * beatPhase * beatPhase; ctx.fillStyle = song.color; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
+  const surfing = playMode === 'surf' && chart && (state === 'play' || state === 'paused');
+  G.blit(ctx, G.layer((fever ? 'f' : 'n') + (surfing ? 's' : 'l'), W, H, x => paintStage(x, fever, !surfing)), W, H);
+  if (beatPhase > 0.15) { ctx.globalAlpha = 0.12 * beatPhase * beatPhase; ctx.fillStyle = song.color; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
   // perspective grid lines for speed feel
   ctx.strokeStyle = 'rgba(255,255,255,.05)'; ctx.lineWidth = 2;
   for (let i = 0; i < 12; i++) { const y = ((i / 12 + (t * 0.5) % (1 / 12)) * H); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
@@ -634,7 +650,6 @@ function draw() {
   else {
   for (let l = 0; l < 4; l++) {
     const x = l * lw;
-    ctx.fillStyle = l % 2 ? 'rgba(255,255,255,.025)' : 'rgba(255,255,255,.05)'; ctx.fillRect(x, 0, lw, H);
     if (laneFlash[l] > 0) { const g = ctx.createLinearGradient(0, hy, 0, hy - H * 0.5); g.addColorStop(0, LANE_COL[l]); g.addColorStop(1, 'transparent'); ctx.globalAlpha = laneFlash[l] * 0.45; ctx.fillStyle = g; ctx.fillRect(x, hy - H * 0.5, lw, H * 0.5); ctx.globalAlpha = 1; }
   }
   // hit line + targets
@@ -665,7 +680,7 @@ function draw() {
   // HUD
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   if (state === 'play' || state === 'paused') {
-    ctx.font = `900 22px Rubik, system-ui`; ctx.fillStyle = COL.text; ctx.fillText(scoreV.toLocaleString('ru-RU'), W / 2, 34 + (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sat')) || 0));
+    ctx.font = `900 22px Rubik, system-ui`; ctx.fillStyle = COL.text; ctx.fillText(scoreV.toLocaleString('ru-RU'), W / 2, 34);
     if (combo >= 3) {
       const s = 1 + Math.min(0.5, laneFlash.reduce((a, b) => Math.max(a, b), 0) * 0.25);
       ctx.save(); ctx.translate(W / 2, H * 0.36); ctx.scale(s, s);
@@ -700,7 +715,8 @@ function finish() {
   $('overNote').textContent = r.isNew ? 'Новый рекорд!' : `Рекорд: ${r.best.toLocaleString('ru-RU')}`;
   $('over').hidden = false;
   if (grade.startsWith('S') || r.isNew) { G.sfx('win'); fx.emit(W / 2, H * 0.2, { n: 90, color: [COL.yellow, COL.pink, COL.cyan, COL.lime], speed: 700, life: 1.5, size: 7, gravity: 500, shape: 'rect' }); }
-  setTimeout(stopSong, 600);
+  const gen = songGen;
+  setTimeout(() => { if (gen === songGen) stopSong(); }, 600);   // only if no new song started meanwhile
   renderSongs();
 }
 
@@ -736,7 +752,7 @@ lat.addEventListener('input', () => { latency = +lat.value; G.set('rhythm.lat', 
 $('start').addEventListener('click', startSong);
 $('again').addEventListener('click', startSong);
 $('overMenu').addEventListener('click', () => { $('over').hidden = true; $('menu').hidden = false; state = 'menu'; });
-$('restart').addEventListener('click', () => { stopSong(); setTimeout(startSong, 300); });
+$('restart').addEventListener('click', () => { stopSong(); startSong(); });
 $('quit').addEventListener('click', () => { stopSong(); $('pause').hidden = true; $('menu').hidden = false; state = 'menu'; renderSongs(); });
 const pause = () => { if (state !== 'play') return; state = 'paused'; clearInterval(schedTimer); ac && ac.suspend(); $('pause').hidden = false; };
 G.topbar({ pause });

@@ -70,13 +70,15 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 /* full-screen menus / results over the game */
 .overlay {
   position: fixed; inset: 0; z-index: var(--z-overlay);
-  display: grid; place-items: center; padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+  /* flex + margin:auto centres a short panel and lets a tall one scroll instead of being cut off */
+  display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+  padding: max(24px, env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
   background: color-mix(in oklch, var(--ink) 82%, transparent);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   animation: ov-in 220ms var(--ease);
 }
 @keyframes ov-in { from { opacity: 0; } }
-.panel { width: min(100%, 420px); display: grid; gap: 14px; text-align: center; animation: pop-in 320ms var(--ease); }
+.panel { width: min(100%, 420px); margin: auto; display: grid; gap: 14px; text-align: center; animation: pop-in 320ms var(--ease); flex-shrink: 0; }
 @keyframes pop-in { from { transform: scale(0.9); opacity: 0; } }
 .panel h1 { margin: 0; font-size: clamp(34px, 11vw, 52px); font-weight: 900; line-height: 1; letter-spacing: -0.02em; text-wrap: balance; }
 .panel p { margin: 0; color: var(--muted); font-size: 17px; text-wrap: pretty; }

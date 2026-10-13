@@ -1,5 +1,5 @@
 // Offline cache for Игротека: everything is local, serve cache-first and refresh in the background.
-const CACHE = 'igra-v7';
+const CACHE = 'igra-v8';
 const ASSETS = ['./', './index.html', './common.css', './common.js', './hockey.html', './penalty.html', './basket.html', './rhythm.html', './words.html', './emoji.html', './geo.html', './geo.json', './words5.json', './beatmap.js',
   './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png',
   './fonts/rubik-cyr.woff2', './fonts/rubik-lat.woff2'];

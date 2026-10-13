@@ -22,9 +22,9 @@
   .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--ink-3); }
   .dot.g { background: var(--lime); } .dot.m { background: var(--red); }
   .prompt {
-    position: fixed; left: 0; right: 0; bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 5;
+    position: fixed; left: 0; right: 0; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 5;
     text-align: center; font-weight: 800; font-size: 18px; pointer-events: none; text-shadow: 0 2px 0 rgba(0,0,0,.4);
-    padding: 0 16px;
+    padding: 0 16px; text-wrap: balance;
   }
   .topbar { top: auto; bottom: 0; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
 </style>
@@ -252,9 +252,7 @@ G.loop(dt => {
 });
 
 /* ---------- render ---------- */
-function draw() {
-  ctx.save(); ctx.translate(shake.x, shake.y);
-  // night stadium sky + pitch
+function paintPitch(ctx) {
   const sky = ctx.createLinearGradient(0, 0, 0, goalR.y);
   sky.addColorStop(0, '#120c2a'); sky.addColorStop(1, '#2b1d5c');
   ctx.fillStyle = sky; ctx.fillRect(-20, -20, W + 40, goalR.y + 20);
@@ -269,6 +267,10 @@ function draw() {
   const box = { l: goalR.x - goalR.w * 0.45, r: goalR.x + goalR.w * 1.45 };
   ctx.beginPath(); ctx.moveTo(box.l + goalR.w * 0.25, pitchTop); ctx.lineTo(box.l - goalR.w * 0.2, H * 0.62); ctx.lineTo(box.r + goalR.w * 0.2, H * 0.62); ctx.lineTo(box.r - goalR.w * 0.25, pitchTop); ctx.stroke();
   ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(ballStart.x, ballStart.y + ballR * 0.9, ballR * 0.3, ballR * 0.12, 0, 0, 7); ctx.fill();
+}
+function draw() {
+  ctx.save(); ctx.translate(shake.x, shake.y);
+  G.blit(ctx, G.layer('pitch', W, H, paintPitch), W, H);
   // net
   ctx.save();
   const sway = Math.sin(performance.now() / 40) * net * goalR.h * 0.08;

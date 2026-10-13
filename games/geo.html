@@ -116,7 +116,14 @@ const proj = (lon, lat) => [(lon + 180) / 360 * WORLD_W, (LAT_TOP - lat) / (LAT_
 const unproj = (x, y) => [x / WORLD_W * 360 - 180, LAT_TOP - y / WORLD_H * (LAT_TOP - LAT_BOT)];
 const paths = GEO.countries.map(c => { const p = new Path2D(); for (const r of c.r) { r.forEach(([lo, la], i) => { const [x, y] = proj(lo, la); i ? p.lineTo(x, y) : p.moveTo(x, y); }); p.closePath(); } return p; });
 let view = { s: 1, x: 0, y: 0 };
-function fitWorld() { const s = Math.max(W / WORLD_W, (H * 0.55) / WORLD_H); view = { s, x: (W - WORLD_W * s) / 2, y: (H - WORLD_H * s) / 2 }; }
+// Start with the whole world in view; pinch or +/− to zoom in.
+// whole world on wide screens; on a portrait phone fill ~55% of the height, centred on lon 20° (Europe/Africa), swipe for the rest
+function fitWorld() {
+  const s = Math.max(W / WORLD_W, Math.min((H * 0.55) / WORLD_H, (W * 2.4) / WORLD_W));
+  const [cx] = proj(20, 0);
+  view = { s, x: W / 2 - cx * s, y: (H - WORLD_H * s) / 2 + H * 0.03 };
+  clampView();
+}
 function clampView() {
   view.s = Math.max(W / WORLD_W * 0.9, Math.min(40, view.s));
   const mw = WORLD_W * view.s, mh = WORLD_H * view.s;
@@ -131,7 +138,7 @@ addEventListener('resize', layout); layout();
 
 let pin = null, truth = null, revealed = false, highlight = -1, missed = -1;
 function drawMap() {
-  ctx.setTransform(Math.min(devicePixelRatio || 1, 2.5), 0, 0, Math.min(devicePixelRatio || 1, 2.5), 0, 0);
+  ctx.setTransform(G.dpr(), 0, 0, G.dpr(), 0, 0);
   ctx.fillStyle = '#16204a'; ctx.fillRect(0, 0, W, H);
   ctx.save(); ctx.translate(view.x, view.y); ctx.scale(view.s, view.s);
   // graticule
@@ -139,11 +146,12 @@ function drawMap() {
   for (let lon = -180; lon <= 180; lon += 30) { const [x] = proj(lon, 0); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, WORLD_H); ctx.stroke(); }
   for (let lat = -60; lat <= 80; lat += 20) { const [, y] = proj(0, lat); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(WORLD_W, y); ctx.stroke(); }
   GEO.countries.forEach((c, i) => {
+    if (c.n === 'Антарктида') return;   // crosses the antimeridian and sits below the map edge
     ctx.fillStyle = i === highlight ? COL.lime : i === missed ? COL.red : '#3b3a6b';
     ctx.fill(paths[i]);
   });
   ctx.strokeStyle = '#1d1846'; ctx.lineWidth = 0.8 / view.s;
-  paths.forEach(p => ctx.stroke(p));
+  paths.forEach((p, i) => { if (GEO.countries[i].n !== 'Антарктида') ctx.stroke(p); });
   ctx.restore();
   if (revealed && truth && pin) {
     const [ax, ay] = toScreen(pin[0], pin[1]), [bx, by] = toScreen(truth[0], truth[1]);
@@ -290,7 +298,7 @@ function startQuiz() {
   showQ();
 }
 function drawShape(c) {
-  const cv = document.createElement('canvas'), size = Math.min(innerWidth * 0.8, 340), dpr = Math.min(devicePixelRatio || 1, 2.5);
+  const cv = document.createElement('canvas'), size = Math.min(innerWidth * 0.8, 340), dpr = G.dpr();
   cv.width = cv.height = size * dpr; const x = cv.getContext('2d'); x.scale(dpr, dpr);
   const [a, b, mx, my] = bbox(c), k = Math.cos(rad((b + my) / 2));
   const w = (mx - a) * k, h = my - b, s = size * 0.86 / Math.max(w, h), ox = (size - w * s) / 2, oy = (size - h * s) / 2;
@@ -342,7 +350,12 @@ $('again').addEventListener('click', begin);
 $('overMenu').addEventListener('click', () => { $('over').hidden = true; $('menu').hidden = false; syncMenu(); fitWorld(); pin = null; revealed = false; highlight = missed = -1; });
 G.topbar();
 syncMenu();
-G.loop(() => drawMap());
+// Redraw only when something on the map changed: an idle map costs nothing.
+let lastKey = '';
+G.loop(() => {
+  const key = [view.s, view.x, view.y, W, H, pin, truth, revealed, highlight, missed].join('|');
+  if (key !== lastKey) { lastKey = key; drawMap(); }
+});
 })();
 </script>
 </body>

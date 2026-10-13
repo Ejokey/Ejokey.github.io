@@ -305,6 +305,7 @@ G.topbar({ pause: () => { if (state === 'play') { state = 'paused'; $('pause').h
 document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'play') { state = 'paused'; $('pause').hidden = false; } });
 
 layout(); home(); servePuck(0); syncMenu();
+window.__hockey = { puck, pads, score: () => score, table: () => table, state: () => state };   // for automated checks
 })();
 </script>
 </body>
