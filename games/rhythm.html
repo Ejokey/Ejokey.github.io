@@ -507,15 +507,15 @@ function stopSong() {
 }
 
 /* ---------- input ---------- */
-// Surf steering: drag anywhere and the ship follows the finger 1:1 (scaled to lane spacing);
-// let go and it settles into the nearest lane. A short tap still hops one lane.
+// Surf steering works like the Audiosurf mouse: the ship sits under your finger (or cursor) and glides
+// after it, anywhere between the lanes. Lanes are ~30% of the screen apart, so the finger never has to reach the edge.
 const surfClamp = v => Math.max(0, Math.min(2, v));
 function surfMove(d) { surf.target = surfClamp(Math.round(surf.target) + d); }
-function laneSpan() { return surfProj(0).hw * 0.66 * 0.8; }   // px of finger travel per lane, a touch quicker than the road itself
+function surfAim(clientX) { surf.target = surfClamp(1 + (clientX - W / 2) / (surfProj(0).hw * 0.66)); }
 addEventListener('keydown', e => { if (playMode !== 'surf' || state !== 'play') return; if (e.key === 'ArrowLeft') surfMove(-1); if (e.key === 'ArrowRight') surfMove(1); });
 canvas.addEventListener('pointerdown', e => {
   if (state !== 'play') return;
-  if (playMode === 'surf') { try { canvas.setPointerCapture(e.pointerId); } catch {} surf.drag = { id: e.pointerId, x0: e.clientX, from: surf.target, moved: false, t0: performance.now() }; return; }
+  if (playMode === 'surf') { try { canvas.setPointerCapture(e.pointerId); } catch {} surf.drag = e.pointerId; surfAim(e.clientX); return; }
   const lane = Math.max(0, Math.min(3, Math.floor(e.clientX / (W / 4))));
   laneFlash[lane] = 1;
   const t = now();
@@ -546,8 +546,8 @@ G.loop(dt => {
   if (state === 'play') {
     const t = now();
     if (playMode === 'surf') {
-      // dragging: near-instant follow; released: quick glide into the lane
-      const k = 1 - Math.exp(-dt * (surf.drag && surf.drag.moved ? 38 : 16)), nx = surf.x + (surf.target - surf.x) * k;
+      // glide after the finger: fast enough to feel direct, smooth enough not to jitter
+      const k = 1 - Math.exp(-dt * 28), nx = surf.x + (surf.target - surf.x) * k;
       surf.vx = surf.vx * 0.7 + ((nx - surf.x) / Math.max(dt, 1e-3)) * 0.3; surf.x = nx;
       const near = Math.round(surf.x); if (near !== surf.near) { surf.near = near; G.buzz(5); }
       for (const n of chart.notes) { if (n.t > t) break; if (!n.hit) surfPass(n); }
@@ -563,18 +563,10 @@ G.loop(dt => {
 });
 
 canvas.addEventListener('pointermove', e => {
-  const d = surf.drag; if (!d || d.id !== e.pointerId || playMode !== 'surf') return;
-  const dx = e.clientX - d.x0;
-  if (!d.moved && Math.abs(dx) < 6) return;
-  d.moved = true; surf.target = surfClamp(d.from + dx / laneSpan());
+  if (playMode !== 'surf' || state !== 'play') return;
+  if (surf.drag === e.pointerId || e.pointerType === 'mouse') surfAim(e.clientX);   // a mouse steers without a click, like the original
 });
-const surfRelease = e => {
-  const d = surf.drag; if (!d || d.id !== e.pointerId) return;
-  surf.drag = null;
-  if (state !== 'play') return;
-  if (!d.moved && performance.now() - d.t0 < 350) surfMove(e.clientX < W / 2 ? -1 : 1);
-  else surf.target = Math.round(surf.target);
-};
+const surfRelease = e => { if (surf.drag === e.pointerId) surf.drag = null; };
 canvas.addEventListener('pointerup', surfRelease);
 canvas.addEventListener('pointercancel', surfRelease);
 function surfPass(n) {
@@ -762,7 +754,7 @@ $('songs').addEventListener('click', async e => {
   const b = e.target.closest('[data-song]'); if (!b) return;
   song = allSongs().find(s => s.id === b.dataset.song) || SONGS[0]; G.set('rhythm.songId', song.id); G.sfx('tap'); renderSongs();
 });
-const PLAY_HINT = { notes: 'Жми на дорожку, когда нота долетает до линии.', surf: 'Лети по трассе: веди пальцем влево-вправо (или тапай по краям). Собирай цветные блоки, объезжай серые.' };
+const PLAY_HINT = { notes: 'Жми на дорожку, когда нота долетает до линии.', surf: 'Лети по трассе: корабль летит под пальцем — веди влево-вправо, можно и между полосами. Собирай цветные блоки, объезжай серые.' };
 function syncPlay() { document.querySelectorAll('[data-play]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.play === playMode))); $('playHint').textContent = PLAY_HINT[playMode]; }
 document.querySelectorAll('[data-play]').forEach(b => b.addEventListener('click', () => { playMode = b.dataset.play; G.set('rhythm.play', playMode); G.sfx('tap'); syncPlay(); renderSongs(); }));
 function syncDiff() { document.querySelectorAll('[data-diff]').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.diff === diff))); }
