@@ -80,6 +80,11 @@
       <b>Баскетбол</b><small>Флик-броски на время, «в огне» ×2</small>
       <span class="meta"><span class="tag">соло · до 4</span><span class="rec" data-rec="basket"></span></span>
     </a>
+    <a class="game" href="geo.html" style="--c: var(--cyan)">
+      <svg viewBox="0 0 80 80" aria-hidden="true"><circle cx="40" cy="40" r="32" fill="#1d3d8f"/><path d="M22 28c6-6 14-4 18 0s4 10 10 8 8 4 6 10-10 10-16 6-6-8-12-8-10-8-6-16z" fill="#7ee36b"/><path d="M52 18c4 2 8 6 6 8s-8 0-8-4z" fill="#7ee36b"/><path d="M40 6c-6 0-10 5-10 10 0 7 10 16 10 16s10-9 10-16c0-5-4-10-10-10z" fill="#ff4fa3"/><circle cx="40" cy="16" r="4" fill="#fff"/></svg>
+      <b>Гео</b><small>Найди город на карте, флаги и контуры стран</small>
+      <span class="meta"><span class="tag">соло · офлайн-карта</span><span class="rec" data-rec="geo"></span></span>
+    </a>
     <a class="game" href="emoji.html" style="--c: var(--lime)">
       <svg viewBox="0 0 80 80" aria-hidden="true"><rect x="6" y="14" width="68" height="52" rx="14" fill="rgba(255,255,255,.3)"/><text x="40" y="50" font-size="26" text-anchor="middle">🎬🤔</text></svg>
       <b>Угадайка</b><small>Фильмы, мультики, игры и сериалы по эмодзи</small>
@@ -108,6 +113,7 @@
     rhythm: () => { const ids = ['grieg', 'mozart', 'elise', 'ode', 'bee', 'bach', 'spring', 'neon', 'turbo', 'chill']; let best = 0; ids.forEach(i => [0, 1, 2].forEach(d => ['', '.surf'].forEach(m => { best = Math.max(best, G.get(`best.rhythm.${i}.${d}${m}`, 0) || 0); }))); return best ? `Рекорд: ${best.toLocaleString('ru-RU')}` : ''; },
     basket: () => { const b = G.get('best.basket', 0); return b ? `Рекорд: ${b}` : ''; },
     emoji: () => { const b = G.get('best.emoji', 0); return b ? `Рекорд: ${b}` : ''; },
+    geo: () => { const b = G.get('best.geo-cities.0', 0) || G.get('best.geo-cities.1', 0); return b ? `Рекорд: ${b.toLocaleString('ru-RU')}` : ''; },
     words: () => { const s = G.get('words.stats', null); return s && s.played ? `Серия: ${s.streak} · побед ${Math.round(s.wins / s.played * 100)}%` : ''; },
   };
   document.querySelectorAll('[data-rec]').forEach(el => { el.textContent = recs[el.dataset.rec](); });

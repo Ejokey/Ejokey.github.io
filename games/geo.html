@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#140f24">
+<title>Гео — Игротека</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="common.css">
+<style>
+  html, body { overflow: hidden; touch-action: none; }
+  #map { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .task {
+    position: fixed; left: 12px; right: 12px; top: calc(70px + env(safe-area-inset-top)); z-index: 5;
+    padding: 12px 16px; border-radius: 18px; background: color-mix(in oklch, var(--ink) 88%, transparent);
+    display: grid; gap: 2px; text-align: center; pointer-events: none;
+  }
+  .task small { color: var(--muted); font-weight: 700; font-size: 14px; }
+  .task b { font-size: 26px; font-weight: 900; line-height: 1.1; }
+  .task .sub { color: var(--muted); font-weight: 700; }
+  .actions {
+    position: fixed; left: 12px; right: 12px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 5;
+    display: flex; gap: 10px; align-items: center;
+  }
+  .actions .btn { flex: 1; }
+  .zoom { position: fixed; right: 12px; bottom: calc(92px + env(safe-area-inset-bottom)); z-index: 5; display: grid; gap: 8px; }
+  .result { position: fixed; left: 12px; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 6; padding: 14px 16px; border-radius: 18px; background: var(--ink-2); text-align: center; display: grid; gap: 4px; animation: pop-in 260ms var(--ease); }
+  .result b { font-size: 34px; font-weight: 900; color: var(--yellow); font-variant-numeric: tabular-nums; }
+  .result span { color: var(--muted); font-weight: 700; }
+  /* quiz modes */
+  .quiz { position: fixed; inset: 0; display: grid; grid-template-rows: auto 1fr auto; padding: calc(70px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); max-width: 520px; margin: 0 auto; background: var(--ink); z-index: 4; }
+  .bar { height: 10px; border-radius: 999px; background: var(--ink-2); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 100%; background: var(--lime); transform-origin: left; }
+  .meta { display: flex; justify-content: space-between; margin-top: 10px; font-weight: 800; color: var(--muted); }
+  .meta b { color: var(--text); font-size: 22px; font-variant-numeric: tabular-nums; }
+  .clue { display: grid; place-items: center; min-height: 0; }
+  .flag { font-size: clamp(110px, 40vw, 180px); line-height: 1; }
+  .clue canvas { width: min(80vw, 340px); height: min(80vw, 340px); }
+  .opts { display: grid; gap: 10px; }
+  .opt { min-height: 58px; padding: 8px 16px; border: 0; border-radius: 16px; text-align: left; background: var(--ink-2); color: var(--text); font-weight: 800; font-size: 18px; box-shadow: 0 4px 0 oklch(0.12 0.04 290); }
+  .opt:active { transform: translateY(3px); box-shadow: 0 1px 0 oklch(0.12 0.04 290); }
+  .opt.ok { background: var(--lime); color: var(--on-color); }
+  .opt.bad { background: var(--red); color: white; }
+  .opt.dim { opacity: 0.4; }
+  .modes { display: grid; gap: 10px; text-align: left; }
+  .mode { display: grid; gap: 2px; padding: 14px 16px; border-radius: 16px; border: 0; background: var(--ink-2); color: var(--text); text-align: left; }
+  .mode b { font-size: 20px; font-weight: 900; }
+  .mode small { color: var(--muted); font-size: 14px; font-weight: 600; }
+  .mode span { font-size: 13px; font-weight: 800; color: var(--yellow); }
+</style>
+</head>
+<body>
+<canvas id="map"></canvas>
+<div class="task" id="task" hidden><small id="taskRound"></small><b id="taskName"></b><span class="sub" id="taskSub"></span></div>
+<div class="zoom" id="zoom" hidden>
+  <button class="round" type="button" id="zin" aria-label="Приблизить">+</button>
+  <button class="round" type="button" id="zout" aria-label="Отдалить">−</button>
+</div>
+<div class="result" id="result" hidden><b id="resPts"></b><span id="resText"></span></div>
+<div class="actions" id="actions" hidden>
+  <button class="btn" type="button" id="guess" disabled>Поставь булавку</button>
+</div>
+
+<div class="quiz" id="quiz" hidden>
+  <div><div class="bar"><i id="timer"></i></div><div class="meta"><span>Вопрос <b id="qn">1</b>/10</span><span>Очки <b id="qpts">0</b></span></div></div>
+  <div class="clue" id="clue"></div>
+  <div class="opts" id="opts"></div>
+</div>
+
+<div class="overlay" id="menu">
+  <div class="panel">
+    <h1>Гео</h1>
+    <p>Офлайн-география: ставь булавку на карте, угадывай флаги и контуры стран.</p>
+    <div class="modes">
+      <button class="mode" type="button" data-mode="cities"><b>Где этот город?</b><small>Ставь булавку на карте. Очки за точность, до 5000 за раунд, 5 раундов.</small><span data-best="cities"></span></button>
+      <button class="mode" type="button" data-mode="countries"><b>Найди страну</b><small>Ткни страну на карте. Попал внутрь — 5000.</small><span data-best="countries"></span></button>
+      <button class="mode" type="button" data-mode="flags"><b>Флаги</b><small>Чей флаг? 10 вопросов на время.</small><span data-best="flags"></span></button>
+      <button class="mode" type="button" data-mode="shapes"><b>Контуры</b><small>Узнай страну по силуэту.</small><span data-best="shapes"></span></button>
+    </div>
+    <div class="seg" role="group" aria-label="Сложность">
+      <button type="button" data-lvl="0" aria-pressed="true">Известные</button>
+      <button type="button" data-lvl="1" aria-pressed="false">Весь мир</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="over" hidden>
+  <div class="panel">
+    <h1 id="overTitle"></h1>
+    <div class="big" id="overScore"></div>
+    <p id="overNote"></p>
+    <div class="choices">
+      <button class="btn" type="button" id="again">Ещё раз</button>
+      <button class="btn ghost" type="button" id="overMenu">Другой режим</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+(async () => {
+'use strict';
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COL = { pink: css('--pink'), cyan: css('--cyan'), yellow: css('--yellow'), lime: css('--lime'), red: css('--red'), ink: css('--ink'), ink2: css('--ink-2'), ink3: css('--ink-3'), text: css('--text') };
+let GEO;
+try { GEO = await (await fetch('geo.json')).json(); } catch { G.toast('Не удалось загрузить карту'); return; }
+const QUIZ = GEO.countries.filter(c => c.q);
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+let level = G.get('geo.level', 0), mode = 'cities';
+
+/* ---------- map: equirectangular, latitudes 84°N … 58°S ---------- */
+const canvas = $('map'); let W, H, ctx;
+const LAT_TOP = 84, LAT_BOT = -58, WORLD_W = 1000, WORLD_H = WORLD_W * (LAT_TOP - LAT_BOT) / 360;
+const proj = (lon, lat) => [(lon + 180) / 360 * WORLD_W, (LAT_TOP - lat) / (LAT_TOP - LAT_BOT) * WORLD_H];
+const unproj = (x, y) => [x / WORLD_W * 360 - 180, LAT_TOP - y / WORLD_H * (LAT_TOP - LAT_BOT)];
+const paths = GEO.countries.map(c => { const p = new Path2D(); for (const r of c.r) { r.forEach(([lo, la], i) => { const [x, y] = proj(lo, la); i ? p.lineTo(x, y) : p.moveTo(x, y); }); p.closePath(); } return p; });
+let view = { s: 1, x: 0, y: 0 };
+function fitWorld() { const s = Math.max(W / WORLD_W, (H * 0.55) / WORLD_H); view = { s, x: (W - WORLD_W * s) / 2, y: (H - WORLD_H * s) / 2 }; }
+function clampView() {
+  view.s = Math.max(W / WORLD_W * 0.9, Math.min(40, view.s));
+  const mw = WORLD_W * view.s, mh = WORLD_H * view.s;
+  view.x = mw <= W ? (W - mw) / 2 : Math.min(W * 0.3, Math.max(W * 0.7 - mw, view.x));
+  view.y = mh <= H ? (H - mh) / 2 : Math.min(H * 0.35, Math.max(H * 0.65 - mh, view.y));
+}
+const toScreen = (lon, lat) => { const [x, y] = proj(lon, lat); return [view.x + x * view.s, view.y + y * view.s]; };
+const toGeo = (sx, sy) => unproj((sx - view.x) / view.s, (sy - view.y) / view.s);
+function zoomAt(f, cx = W / 2, cy = H / 2) { const ns = Math.max(W / WORLD_W * 0.9, Math.min(40, view.s * f)); const k = ns / view.s; view.x = cx - (cx - view.x) * k; view.y = cy - (cy - view.y) * k; view.s = ns; clampView(); }
+function layout() { ({ w: W, h: H, ctx } = G.fit(canvas)); fitWorld(); }
+addEventListener('resize', layout); layout();
+
+let pin = null, truth = null, revealed = false, highlight = -1, missed = -1;
+function drawMap() {
+  ctx.setTransform(Math.min(devicePixelRatio || 1, 2.5), 0, 0, Math.min(devicePixelRatio || 1, 2.5), 0, 0);
+  ctx.fillStyle = '#16204a'; ctx.fillRect(0, 0, W, H);
+  ctx.save(); ctx.translate(view.x, view.y); ctx.scale(view.s, view.s);
+  // graticule
+  ctx.strokeStyle = 'rgba(255,255,255,.06)'; ctx.lineWidth = 1 / view.s;
+  for (let lon = -180; lon <= 180; lon += 30) { const [x] = proj(lon, 0); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, WORLD_H); ctx.stroke(); }
+  for (let lat = -60; lat <= 80; lat += 20) { const [, y] = proj(0, lat); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(WORLD_W, y); ctx.stroke(); }
+  GEO.countries.forEach((c, i) => {
+    ctx.fillStyle = i === highlight ? COL.lime : i === missed ? COL.red : '#3b3a6b';
+    ctx.fill(paths[i]);
+  });
+  ctx.strokeStyle = '#1d1846'; ctx.lineWidth = 0.8 / view.s;
+  paths.forEach(p => ctx.stroke(p));
+  ctx.restore();
+  if (revealed && truth && pin) {
+    const [ax, ay] = toScreen(pin[0], pin[1]), [bx, by] = toScreen(truth[0], truth[1]);
+    ctx.strokeStyle = COL.yellow; ctx.lineWidth = 3; ctx.setLineDash([8, 8]); ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke(); ctx.setLineDash([]);
+  }
+  if (revealed && truth) drawPin(truth, COL.lime, '★');
+  if (pin) drawPin(pin, COL.pink);
+}
+function drawPin([lon, lat], color, mark) {
+  const [x, y] = toScreen(lon, lat);
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.ellipse(x, y + 2, 7, 3, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(x, y); ctx.bezierCurveTo(x - 14, y - 18, x - 12, y - 36, x, y - 36); ctx.bezierCurveTo(x + 12, y - 36, x + 14, y - 18, x, y); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y - 24, 5, 0, 7); ctx.fill();
+}
+
+/* ---------- touch: drag pans, pinch zooms, tap drops the pin ---------- */
+const ptrs = new Map(); let gesture = null;
+canvas.addEventListener('pointerdown', e => {
+  if (!mapActive()) return;
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  try { canvas.setPointerCapture(e.pointerId); } catch {}
+  if (ptrs.size === 1) gesture = { tap: true, x0: e.clientX, y0: e.clientY, t0: performance.now(), vx: view.x, vy: view.y };
+  else gesture = { tap: false, pinch: dist(), s0: view.s, vx: view.x, vy: view.y, c: center() };
+});
+canvas.addEventListener('pointermove', e => {
+  if (!ptrs.has(e.pointerId) || !gesture) return;
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (ptrs.size === 1) {
+    const dx = e.clientX - gesture.x0, dy = e.clientY - gesture.y0;
+    if (Math.hypot(dx, dy) > 8) gesture.tap = false;
+    if (!gesture.tap) { view.x = gesture.vx + dx; view.y = gesture.vy + dy; clampView(); }
+  } else if (gesture.pinch) {
+    const k = dist() / gesture.pinch, c = center();
+    const ns = Math.max(W / WORLD_W * 0.9, Math.min(40, gesture.s0 * k)), r = ns / gesture.s0;
+    view.s = ns; view.x = c.x - (gesture.c.x - gesture.vx) * r; view.y = c.y - (gesture.c.y - gesture.vy) * r; clampView();
+  }
+});
+const up = e => {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.delete(e.pointerId);
+  if (gesture && gesture.tap && ptrs.size === 0 && performance.now() - gesture.t0 < 450) placePin(e.clientX, e.clientY);
+  if (ptrs.size === 0) gesture = null;
+  else if (ptrs.size === 1) { const [p] = ptrs.values(); gesture = { tap: false, x0: p.x, y0: p.y, vx: view.x, vy: view.y }; }
+};
+canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
+const dist = () => { const [a, b] = [...ptrs.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+const center = () => { const [a, b] = [...ptrs.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; };
+$('zin').addEventListener('click', () => zoomAt(1.6)); $('zout').addEventListener('click', () => zoomAt(1 / 1.6));
+const mapActive = () => !$('task').hidden && $('over').hidden && $('menu').hidden && !revealed;
+function placePin(sx, sy) {
+  pin = toGeo(sx, sy); G.sfx('tap'); G.buzz(8);
+  $('guess').disabled = false; $('guess').textContent = 'Здесь!';
+}
+
+/* ---------- geometry ---------- */
+const R = 6371, rad = d => d * Math.PI / 180;
+function km([lo1, la1], [lo2, la2]) { const a = Math.sin(rad(la2 - la1) / 2) ** 2 + Math.cos(rad(la1)) * Math.cos(rad(la2)) * Math.sin(rad(lo2 - lo1) / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(a)); }
+function inside([lon, lat], c) {
+  for (const ring of c.r) { let ins = false; for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) { const [xi, yi] = ring[i], [xj, yj] = ring[j]; if ((yi > lat) !== (yj > lat) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) ins = !ins; } if (ins) return true; }
+  return false;
+}
+const fmtKm = d => d < 1 ? 'точно в цель' : Math.round(d).toLocaleString('ru-RU') + ' км';
+
+/* ---------- map rounds ---------- */
+const ROUNDS = 5;
+let rounds = [], ri = 0, total = 0;
+function startMap() {
+  if (mode === 'cities') {
+    const pool = GEO.cities.filter(c => level ? true : (c.pop > 3e6 || (c.cap && c.pop > 1.5e6))).filter(c => c.lat < LAT_TOP && c.lat > LAT_BOT);
+    rounds = shuffle(pool.slice()).slice(0, ROUNDS);
+  } else {
+    const pool = QUIZ.filter(c => level ? true : c.pop > 2e7);
+    rounds = shuffle(pool.slice()).slice(0, ROUNDS);
+  }
+  ri = 0; total = 0;
+  ['menu', 'over', 'quiz'].forEach(id => { $(id).hidden = true; });
+  ['task', 'actions', 'zoom'].forEach(id => { $(id).hidden = false; });
+  nextMapRound();
+}
+function nextMapRound() {
+  pin = null; truth = null; revealed = false; highlight = -1; missed = -1; $('result').hidden = true;
+  fitWorld();
+  const r = rounds[ri];
+  $('taskRound').textContent = `Раунд ${ri + 1}/${ROUNDS} · ${total.toLocaleString('ru-RU')} очков`;
+  $('taskName').textContent = r.n;
+  $('taskSub').textContent = mode === 'cities' ? r.k : 'ткни внутрь страны';
+  $('guess').disabled = true; $('guess').textContent = 'Поставь булавку';
+}
+$('guess').addEventListener('click', () => {
+  if (revealed) { ri++; return ri < ROUNDS ? nextMapRound() : endMap(); }
+  if (!pin) return;
+  const r = rounds[ri];
+  let pts, text;
+  if (mode === 'cities') {
+    truth = [r.lon, r.lat];
+    const d = km(pin, truth);
+    pts = Math.round(5000 * Math.exp(-d / 1800)); if (d < 60) pts = 5000;
+    text = `Промах: ${fmtKm(d)}`;
+  } else {
+    const idx = GEO.countries.indexOf(r);
+    highlight = idx; truth = [r.lx, r.ly];
+    if (inside(pin, r)) { pts = 5000; text = 'Прямо в стране!'; }
+    else {
+      const d = km(pin, truth); pts = Math.round(4000 * Math.exp(-d / 1500));
+      const hitIdx = GEO.countries.findIndex(c => inside(pin, c));
+      missed = hitIdx; text = (hitIdx >= 0 ? `Это ${GEO.countries[hitIdx].n}. ` : '') + `До цели ${fmtKm(d)}`;
+    }
+  }
+  revealed = true; total += pts;
+  $('resPts').textContent = '+' + pts.toLocaleString('ru-RU'); $('resText').textContent = text; $('result').hidden = false;
+  $('guess').textContent = ri + 1 < ROUNDS ? 'Дальше' : 'Итог';
+  G.sfx(pts >= 4000 ? 'coin' : pts >= 1500 ? 'flip' : 'error', 3); G.buzz(pts >= 4000 ? [20, 30, 20] : 20);
+  // show both points
+  const [a, b] = [pin, truth];
+  const lonSpan = Math.abs(a[0] - b[0]) + 20, latSpan = Math.abs(a[1] - b[1]) + 14;
+  const s = Math.min(W / (lonSpan / 360 * WORLD_W), H * 0.5 / (latSpan / (LAT_TOP - LAT_BOT) * WORLD_H), 30);
+  const [mx, my] = proj((a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+  view.s = Math.max(W / WORLD_W * 0.9, s); view.x = W / 2 - mx * view.s; view.y = H * 0.5 - my * view.s; clampView();
+});
+function endMap() {
+  ['task', 'actions', 'zoom', 'result'].forEach(id => { $(id).hidden = true; });
+  const key = `geo.${mode}.${level}`, r = G.best(key.replace('geo.', 'geo-'), total);
+  $('overTitle').textContent = total >= 20000 ? 'Географ!' : total >= 12000 ? 'Отлично!' : total >= 6000 ? 'Неплохо' : 'Мир большой';
+  $('overScore').textContent = total.toLocaleString('ru-RU');
+  $('overNote').textContent = `из ${(ROUNDS * 5000).toLocaleString('ru-RU')}. ` + (r.isNew ? 'Новый рекорд!' : `Рекорд: ${r.best.toLocaleString('ru-RU')}`);
+  $('over').hidden = false; G.sfx(total >= 12000 ? 'win' : 'lose');
+}
+
+/* ---------- quiz modes: flags & shapes ---------- */
+const QN = 10, QT = 12;
+let qs = [], qi = 0, qpts = 0, streak = 0, qTimer = 0, tLeft = 0, answered = false, right = 0;
+const flagOf = a2 => String.fromCodePoint(...[...a2.toUpperCase()].map(ch => 0x1F1E6 + ch.charCodeAt(0) - 65));
+function bbox(c) { let a = 180, b = 90, x = -180, y = -90; for (const r of c.r) for (const [lo, la] of r) { a = Math.min(a, lo); x = Math.max(x, lo); b = Math.min(b, la); y = Math.max(y, la); } return [a, b, x, y]; }
+function startQuiz() {
+  let pool = QUIZ.filter(c => level ? true : c.pop > 1.5e7);
+  if (mode === 'shapes') pool = pool.filter(c => { const [a, b, x, y] = bbox(c); return (x - a) + (y - b) > 6 && x - a < 160; });
+  qs = shuffle(pool.slice()).slice(0, QN).map(c => {
+    const same = QUIZ.filter(o => o !== c && o.c === c.c);
+    const others = shuffle((same.length >= 3 ? same : QUIZ.filter(o => o !== c)).slice()).slice(0, 3);
+    return { c, opts: shuffle([c, ...others]) };
+  });
+  qi = 0; qpts = 0; streak = 0; right = 0;
+  ['menu', 'over'].forEach(id => { $(id).hidden = true; }); $('quiz').hidden = false;
+  showQ();
+}
+function drawShape(c) {
+  const cv = document.createElement('canvas'), size = Math.min(innerWidth * 0.8, 340), dpr = Math.min(devicePixelRatio || 1, 2.5);
+  cv.width = cv.height = size * dpr; const x = cv.getContext('2d'); x.scale(dpr, dpr);
+  const [a, b, mx, my] = bbox(c), k = Math.cos(rad((b + my) / 2));
+  const w = (mx - a) * k, h = my - b, s = size * 0.86 / Math.max(w, h), ox = (size - w * s) / 2, oy = (size - h * s) / 2;
+  x.fillStyle = COL.yellow; x.beginPath();
+  for (const r of c.r) { r.forEach(([lo, la], i) => { const px = ox + (lo - a) * k * s, py = oy + (my - la) * s; i ? x.lineTo(px, py) : x.moveTo(px, py); }); x.closePath(); }
+  x.fill('evenodd');
+  return cv;
+}
+function showQ() {
+  const { c, opts } = qs[qi];
+  answered = false;
+  $('qn').textContent = qi + 1; $('qpts').textContent = qpts;
+  const clue = $('clue'); clue.innerHTML = '';
+  if (mode === 'flags') { const f = document.createElement('div'); f.className = 'flag'; f.textContent = flagOf(c.a2); clue.appendChild(f); }
+  else clue.appendChild(drawShape(c));
+  $('opts').innerHTML = opts.map(o => `<button type="button" class="opt" data-n="${o.n}">${o.n}</button>`).join('');
+  G.sfx('flip', 2);
+  clearInterval(qTimer); const t0 = performance.now();
+  qTimer = setInterval(() => { tLeft = QT - (performance.now() - t0) / 1000; const k = Math.max(0, tLeft / QT); $('timer').style.transform = `scaleX(${k})`; $('timer').style.background = k < 0.3 ? 'var(--red)' : k < 0.6 ? 'var(--yellow)' : 'var(--lime)'; if (tLeft <= 0) answer(null); }, 50);
+}
+function answer(btn) {
+  if (answered) return; answered = true; clearInterval(qTimer);
+  const { c } = qs[qi], ok = btn && btn.dataset.n === c.n;
+  document.querySelectorAll('#opts .opt').forEach(b => b.classList.add(b.dataset.n === c.n ? 'ok' : b === btn ? 'bad' : 'dim'));
+  if (ok) { streak++; right++; const g = Math.round(100 + 100 * Math.max(0, tLeft) / QT) * (streak >= 3 ? 2 : 1); qpts += g; G.sfx('coin'); G.buzz(15); G.toast(streak >= 3 ? `+${g} · серия ×2` : `+${g}`); }
+  else { streak = 0; G.sfx('error'); G.buzz([30, 40, 30]); if (!btn) G.toast('Время вышло'); }
+  $('qpts').textContent = qpts;
+  setTimeout(() => { qi++; if (qi < QN) showQ(); else endQuiz(); }, ok ? 800 : 1500);
+}
+$('opts').addEventListener('click', e => { const b = e.target.closest('.opt'); if (b) answer(b); });
+function endQuiz() {
+  $('quiz').hidden = true;
+  const r = G.best(`geo-${mode}.${level}`, qpts);
+  $('overTitle').textContent = right >= 9 ? 'Знаток мира!' : right >= 6 ? 'Отлично!' : right >= 3 ? 'Неплохо' : 'Мир большой';
+  $('overScore').textContent = qpts;
+  $('overNote').textContent = `Угадано ${right} из ${QN}. ` + (r.isNew ? 'Новый рекорд!' : `Рекорд: ${r.best}`);
+  $('over').hidden = false; G.sfx(right >= 6 ? 'win' : 'lose');
+}
+
+/* ---------- menu ---------- */
+function syncMenu() {
+  document.querySelectorAll('[data-lvl]').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.lvl === level)));
+  document.querySelectorAll('[data-best]').forEach(el => { const v = G.get(`best.geo-${el.dataset.best}.${level}`, null); el.textContent = v != null ? `Рекорд: ${v.toLocaleString('ru-RU')}` : ''; });
+}
+document.querySelectorAll('[data-lvl]').forEach(b => b.addEventListener('click', () => { level = +b.dataset.lvl; G.set('geo.level', level); G.sfx('tap'); syncMenu(); }));
+const begin = () => (mode === 'cities' || mode === 'countries') ? startMap() : startQuiz();
+document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { mode = b.dataset.mode; G.sfx('tap'); begin(); }));
+$('again').addEventListener('click', begin);
+$('overMenu').addEventListener('click', () => { $('over').hidden = true; $('menu').hidden = false; syncMenu(); fitWorld(); pin = null; revealed = false; highlight = missed = -1; });
+G.topbar();
+syncMenu();
+G.loop(() => drawMap());
+})();
+</script>
+</body>
+</html>
