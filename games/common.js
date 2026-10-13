@@ -195,7 +195,7 @@
     return bar;
   };
 
-  G.VERSION = 12;   // keep equal to the number in sw.js CACHE ('igra-v12'); shown on the hub
+  G.VERSION = 13;   // keep equal to the number in sw.js CACHE ('igra-v13'); shown on the hub
 
   // Updates: Android often resumes the app from memory instead of reloading it, so ask for a new
   // version on every open and every return to the app. When a new one takes over, the hub reloads

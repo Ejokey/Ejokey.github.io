@@ -75,6 +75,11 @@
 
   <h2>НА ПАРУ МИНУТ</h2>
   <div class="list">
+    <a class="game" href="jump.html" style="--c: var(--lime)">
+      <svg viewBox="0 0 80 80" aria-hidden="true"><rect x="4" y="60" width="72" height="16" rx="3" fill="#8a5a32"/><rect x="4" y="58" width="72" height="6" rx="2" fill="#5ccf4a"/><rect x="44" y="14" width="16" height="16" rx="2" fill="#ffd23f"/><text x="52" y="27" font-size="12" font-weight="900" text-anchor="middle" fill="#7a4a10">?</text><ellipse cx="26" cy="40" rx="12" ry="11" fill="#ff5fa8"/><circle cx="23" cy="37" r="3.5" fill="#fff"/><circle cx="31" cy="37" r="3.5" fill="#fff"/><circle cx="24" cy="37" r="1.6" fill="#1b1530"/><circle cx="32" cy="37" r="1.6" fill="#1b1530"/><circle cx="64" cy="48" r="4" fill="#ffd23f"/></svg>
+      <b>Прыг-скок</b><small>Платформер: 8 миров, монетки, враги и флаг в конце</small>
+      <span class="meta"><span class="tag">соло</span><span class="rec" data-rec="jump"></span></span>
+    </a>
     <a class="game" href="tower.html" style="--c: var(--pink)">
       <svg viewBox="0 0 80 80" aria-hidden="true"><rect x="20" y="58" width="44" height="12" rx="2" fill="#7b5cff"/><rect x="20" y="46" width="44" height="12" rx="2" fill="#b05cff"/><rect x="24" y="34" width="38" height="12" rx="2" fill="#ff5cc8"/><rect x="24" y="22" width="34" height="12" rx="2" fill="#ffd84a"/><rect x="40" y="8" width="34" height="12" rx="2" fill="#fff"/></svg>
       <b>Башня</b><small>Ставь блоки точно — строй до неба</small>
@@ -122,6 +127,7 @@
     hockey: () => { const n = ['easy', 'normal', 'hard'].reduce((a, l) => a + G.get('hockey.wins.' + l, 0), 0); return n ? `Побед над ботом: ${n}` : ''; },
     penalty: () => { const n = G.get('penalty.wins', 0); return n ? `Побед над ботом: ${n}` : ''; },
     rhythm: () => { const ids = ['grieg', 'mozart', 'elise', 'ode', 'bee', 'bach', 'spring', 'neon', 'turbo', 'chill']; let best = 0; ids.forEach(i => [0, 1, 2].forEach(d => ['', '.surf'].forEach(m => { best = Math.max(best, G.get(`best.rhythm.${i}.${d}${m}`, 0) || 0); }))); return best ? `Рекорд: ${best.toLocaleString('ru-RU')}` : ''; },
+    jump: () => { const s = G.get('jump.stars', []), n = s.reduce((a, b) => a + (b || 0), 0); return n ? `Звёзд: ${n} из 24` : ''; },
     tower: () => { const b = G.get('best.tower', 0); return b ? `Рекорд: ${b} этажей` : ''; },
     react: () => { const b = G.get('best.react', 0); return b ? `Лучшая реакция: ${b} мс` : ''; },
     basket: () => { const b = G.get('best.basket', 0); return b ? `Рекорд: ${b}` : ''; },

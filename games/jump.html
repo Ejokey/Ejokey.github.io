@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#140f24">
+<title>Прыг-скок — Игротека</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="common.css">
+<style>
+  html, body { overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+  canvas { position: fixed; left: 0; top: 0; width: 100%; display: block; }
+  .hud {
+    position: fixed; left: 72px; right: 128px; top: max(8px, env(safe-area-inset-top)); height: 48px; z-index: 11; pointer-events: none;
+    display: flex; align-items: center; gap: 12px; font-weight: 900; font-size: 18px; text-shadow: 0 2px 0 rgba(0,0,0,.45); white-space: nowrap; overflow: hidden;
+  }
+  .hud span { display: inline-flex; align-items: center; gap: 6px; }
+  .coin-i { width: 15px; height: 15px; border-radius: 50%; background: var(--yellow); box-shadow: inset -3px -2px 0 oklch(0.7 0.16 80); }
+  .shield-i { width: 15px; height: 15px; border-radius: 50%; border: 3px solid var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+  /* controls: a Game Boy style pad under the game in portrait, translucent corners in landscape */
+  .pad {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 18px calc(14px + env(safe-area-inset-bottom)); background: var(--ink-2); border-top: 3px solid var(--ink-3);
+  }
+  .pad.float { background: transparent; border: 0; pointer-events: none; }
+  .pad.float > * { pointer-events: auto; opacity: 0.42; }
+  .pad.float .dpad { width: min(30vw, 200px); height: min(16vw, 84px); }
+  .pad.float .jumpbtn { width: min(16vw, 96px); }
+  .dpad { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: min(52vw, 230px); height: min(26vw, 110px); touch-action: none; }
+  .dpad span, .jumpbtn {
+    display: grid; place-items: center; border-radius: 22px; background: var(--ink-3); color: var(--text);
+    box-shadow: 0 5px 0 oklch(0.12 0.04 290); font-size: 34px; font-weight: 900; transition: transform 60ms, box-shadow 60ms;
+  }
+  .dpad span.on, .jumpbtn.on { transform: translateY(4px); box-shadow: 0 1px 0 oklch(0.12 0.04 290); background: var(--line); }
+  .jumpbtn { width: min(30vw, 124px); aspect-ratio: 1; border: 0; border-radius: 50%; background: var(--pink); color: white; box-shadow: 0 6px 0 color-mix(in oklch, var(--pink) 50%, black); touch-action: none; }
+  .jumpbtn.on { background: color-mix(in oklch, var(--pink) 80%, black); box-shadow: 0 1px 0 color-mix(in oklch, var(--pink) 50%, black); }
+  .levels { display: grid; gap: 10px; }
+  .lvl {
+    display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 12px; padding: 12px 14px; border: 0; border-radius: 16px;
+    background: var(--ink-2); color: var(--text); text-align: left; font-weight: 800; font-size: 17px;
+  }
+  .lvl b { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: var(--pink); color: white; font-size: 20px; }
+  .lvl .st { color: var(--yellow); letter-spacing: 2px; font-size: 18px; }
+  .lvl:disabled { opacity: 0.45; }
+  .lvl:disabled b { background: var(--ink-3); }
+  .stars { font-size: 46px; letter-spacing: 6px; color: var(--yellow); line-height: 1; }
+  .stars i { font-style: normal; color: var(--ink-3); }
+  .stats { display: grid; gap: 4px; color: var(--muted); font-weight: 700; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud" id="hud" hidden><span id="lvlName"></span><span><i class="coin-i"></i><b id="coins">0</b></span><span id="shield" hidden><i class="shield-i"></i></span></div>
+<div class="pad" id="pad" hidden>
+  <div class="dpad" id="dpad"><span data-d="-1" aria-label="Влево">◀</span><span data-d="1" aria-label="Вправо">▶</span></div>
+  <button class="jumpbtn" type="button" id="jumpBtn" aria-label="Прыжок">▲</button>
+</div>
+
+<div class="overlay" id="menu">
+  <div class="panel">
+    <h1>Прыг-скок</h1>
+    <p>Беги вправо до флага. Прыгай на врагов сверху, бей блоки головой — там монетки и щит. Чем дольше держишь прыжок, тем выше. Колючих не трогай!</p>
+    <div class="levels" id="levels"></div>
+  </div>
+</div>
+
+<div class="overlay" id="pause" hidden>
+  <div class="panel">
+    <h1>Пауза</h1>
+    <div class="choices">
+      <button class="btn" type="button" id="resume">Продолжить</button>
+      <button class="btn ghost" type="button" id="restart">Начать уровень заново</button>
+      <button class="btn ghost" type="button" id="toLevels">Уровни</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="over" hidden>
+  <div class="panel">
+    <h1 id="overTitle">Уровень пройден!</h1>
+    <div class="stars" id="stars"></div>
+    <div class="stats" id="stats"></div>
+    <div class="choices">
+      <button class="btn" type="button" id="next">Дальше</button>
+      <button class="btn ghost" type="button" id="again">Ещё раз</button>
+      <button class="btn ghost" type="button" id="overLevels">Уровни</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+(() => {
+'use strict';
+/* Levels are generated and checked for reachability by tools/levels.py — edit them there. */
+/*LEVELS*/const LEVELS = [{"name": "Зелёный луг","theme": "meadow","map": ["","","","","              ?","","                                                                                                                      ooo","                                                 oooo","       ooo  ?BPB?                                ====       ???                  oooo       B?B                    XXX   X","                                         ooo                                                                      XXXX   XX","                               X                                             X                  ooooo            XXXXX   XXX","  S                  E       EXX                        E       C     E   E  X                      E  E        XXXXXX   XXXX         F","#########################################   #####################################    #################################################################","#########################################   #####################################    #################################################################"]},{"name": "Холмы","theme": "hills","map": ["","","","                                                     o                                                                                          oo  oo","                                                                                                                                                  o","                                                   ?=?                                                                       ooo","","                            oooo                                                                      ooooo                 #######","              P                                                          oooooo                 ?B?B?  ===                  #######                      X####","                                 E      E                                                                         #######   #######                     XX####","        oooo              #####################                                                                   #######   #######                    XXX####","  S               H       #####################      J                 M            C     H        E    ^^^       #######   #######      E  E  H  J   XXXX####  F","#######################   #####################   #############   #####          ##############################   #######   #######   #########################################","#######################   #####################   #############   #####          ##############################   #######   #######   #########################################"]},{"name": "Пещера","theme": "cave","map": ["##########################################################################################################################################################################","##########################################################################################################################################################################","                         #","                         #","                         #                                                              Z                                                 Z","                         #                          Z               ooo                             ?B?","                      Z  #                                                                                                             ooo","                         #               oooo                              C      K            E                                       ===","          ?P?            #              BBBBBB                           ######################################","                                                                         ######################################                  ===         ===             X","                          ooo                                            ######################################                                             XX","  S             E                      K          E   E                  #####################################^^^^ E   K                              E    XXX    F","###############################   ###########################   ###      #####################################################                    ########################","###############################   ###########################   ###V     #####################################################                    ########################"]},{"name": "Облака","theme": "clouds","map": ["","","","                                             Z                                       o                            Z","                                                                                          oooEo","                                                       ?B?                               ########","                                          oooo                                           ########             ===               ?B?B","                              E           ====               ooooo                       ########                                      oooo       H","        ?P?       ooo       ######                  H                   C    E           ########        ===       ===      K                  ########                X###","                            ######  ====         ##########M         ############        ########                       #############M         ########               XX###","                  #######   ######               ##########          ############    J   ########   #####               #############          ########              XXX###","  S               #######   ######               ##########          ############   ###  ########   #####               #############          ########      E  E   XXXX###     F","###############   #######   ######               ##########          ############   ###  ########   #####               #############          ########   ###############################","###############   #######   ######               ##########          ############   ###  ########   #####               #############          ########   ###############################"]},{"name": "Закат","theme": "sunset","map": ["","","","                                                                                                                                         o","","                                                 oooo","                                                 #####                              oooo           oooo               ===   Z","                                                 #####                                                                                                      X####X","         ?P?         oooooo                      #####                B?B?B                                                                                XX####XX","                                                 #####                           M              M             H     ^^   E                                XXX####XXX","                                                 #####                                                    #########################                      XXXX####XXXX","  S                M                H   H    J   #####      E   K       C                                 #########################      J  K     H     XXXXX####XXXXX        F","###################           ################   #####    #######################          #####          #########################   ###################################################","###################           ################   #####    #######################          #####          #########################   ###################################################"]},{"name": "Ночной лес","theme": "night","map": ["","","","                                                                                                o","                                              ?                 Z","                                                                                                   ooKoo","                                                              ooooo                                #####                                             Z","                                 oooo                                                              #####","         ?P?                     ====       B?B?B             #####                                #####                 ooooo              ???                X####X","                                                              #####                                #####                                                      XX####XX","                                                      #####   #####   #####                        #####                                                     XXX####XXX","  S                 E           ^^^^    K    H        #####   #####   #####     C     E  E  H   J  #####  ^^^          M            H   K      E  H     ^^  XXXX####XXXX            F","#########################   #######################   #####   #####   #####   #################################   #####          #############################################################","#########################   #######################   #####   #####   #####   #################################   #####          #############################################################"]},{"name": "Шахта","theme": "mine","map": ["#########################################################################################################################################################################################","#########################################################################################################################################################################################","                                               Z    X                                                           Z","                                                    X","                                                                   oo                        oo     K     E         H","                                    E     K                       BBBB                           ########################","                              oo ####################                                   oo       ########################","                                 ####################                                            ########################                                  ooooo","        ?P?                      ####################     C    E        ^^   H                   ########################   #####                     B?B?B=====         XXX","                                 ####################   #########################                ########################   #####                                       XXXXX","                                 ####################   #########################                ########################   #####   #####                              XXXXXXX","  S           E    K             ####################   #########################   ###          ########################   #####   #####      E   K        ^^^  H    XXXXXXXXX     F","#######################   ###    ####################   #########################   ###          ########################   #####   #####   #############################################","#######################   ###V   ####################   #########################   ###V    V    ########################   #####   #####   #############################################"]},{"name": "Лавовый замок","theme": "castle","map": ["XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX","","","","","","                                                                                                  Z                   ooo                                             oo","                                                                                                                      ===                  Z","          ?P?                 Z               ==              B?B         oooooo                                           ==                                        XXXX","                                          ==                                            E    ^^        K  E     V                                       ===         XXXXXX","                                                                                     XXXXXXXXXXXXXXXXXXXXXXXXXX                                                    XXXXXXXX","  S             K                 E                  K    C       H     M            XXXXXXXXXXXXXXXXXXXXXXXXXX                   H    K        E                 XXXXXXXXXX        F","XXXXXXXXXXXXXXXXXXXXXLLLLXXXXXXXXXXXXXXXXLLLLLLLLLXXXXXXXXXXXXXXXXXXXXXLLLLLLLLLLLLLLXXXXXXXXXXXXXXXXXXXXXXXXXXLLLLLLLLLLLLLLLLXXXXXXXXXXXXXXXXXXXXXXXXLLLLLLXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX","XXXXXXXXXXXXXXXXXXXXXLLLLXXXXXXXXXXXXXXXXLLLLLLLLLXXXXXXXXXXXXXXXXXXXXXLLLLLLLLLLLLLLXXXXXXXXXXXXXXXXXXXXXXXXXXLLLLLLLLLLLLLLLLXXXXXXXXXXXXXXXXXXXXXXXXLLLLLLXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"]}];/*END LEVELS*/
+
+const $ = id => document.getElementById(id);
+const canvas = $('c');
+let W, H, GH, ctx, TS, viewW;                          // GH: height of the game area above the pad
+const ROWS = 14;
+const SOLID = new Set(['#', 'X', 'B', '?', 'P', 'U', 'J']);
+
+// Movement tuned for a phone: forgiving jump timing (coyote time, input buffer), held jump goes higher.
+const PH = { g: 55, jump: 22, spring: 31, stomp: 13, stompHeld: 19, maxV: 7, acc: 60, air: 38, fric: 50, fall: 22 };
+const STEP = 1 / 120;
+
+const THEMES = {
+  meadow: { sky: ['#5fb6ff', '#bfe8ff'], far: '#7cc96a', near: '#4fae55', dirt: '#8a5a32', dirt2: '#6f4526', top: '#5ccf4a', stone: '#9a8f87' },
+  hills:  { sky: ['#ffb36b', '#ffe3a6'], far: '#d38a5a', near: '#9fbf4a', dirt: '#8f5b34', dirt2: '#71442a', top: '#9ad64a', stone: '#a1928a' },
+  cave:   { sky: ['#140f24', '#2a1d4a'], far: '#231a3d', near: '#2f2452', dirt: '#4a3d6e', dirt2: '#3a2f58', top: '#7a6ab8', stone: '#5c5480' },
+  sunset: { sky: ['#3a1d6e', '#ff7a6b'], far: '#5a2d7a', near: '#3d1f5e', dirt: '#3f2550', dirt2: '#2e1a3d', top: '#ff9a4a', stone: '#6a5378' },
+  clouds: { sky: ['#5fb0ff', '#cfeaff'], far: '#9fd0ff', near: '#dff1ff', dirt: '#f2f7ff', dirt2: '#c9daf2', top: '#ffffff', stone: '#b9c9e0' },
+  night:  { sky: ['#070b24', '#1f2a5e'], far: '#16204a', near: '#1b2a3a', dirt: '#3b2e4a', dirt2: '#2c2238', top: '#3fae7a', stone: '#5a5a78' },
+  mine:   { sky: ['#1a120c', '#3a2618'], far: '#2a1c12', near: '#3a2818', dirt: '#6b4a2e', dirt2: '#553a22', top: '#a0763e', stone: '#7a6a5a' },
+  castle: { sky: ['#1a0b14', '#3d1422'], far: '#2a1020', near: '#3a1426', dirt: '#5a4a52', dirt2: '#463840', top: '#7a6870', stone: '#6e6068' },
+};
+
+let state = 'menu', li = 0, lv = null, grid = null, theme = null;
+let hero, enemies, plats, berries, bumps, pops, flag, checkpoints, cp, coins, coinTotal, deaths, tStart, time, camX = 0, winT = 0, deadT = 0;
+const input = { dir: 0, jump: false, jumpAt: -1 };
+const fx = new G.Particles(), shake = new G.Shake();
+let stars = G.get('jump.stars', []);
+
+/* ---------- layout ---------- */
+function layout() {
+  W = innerWidth; H = innerHeight;
+  const portrait = H > W * 1.15;
+  const pad = $('pad');
+  pad.classList.toggle('float', !portrait);
+  const padH = portrait ? Math.min(250, Math.max(170, H * 0.26)) : 0;
+  pad.style.height = portrait ? padH + 'px' : '';
+  GH = H - padH;
+  canvas.style.height = GH + 'px';
+  ({ ctx } = G.fit(canvas));
+  TS = GH / ROWS; viewW = W / TS;
+}
+addEventListener('resize', layout);
+
+/* ---------- level setup ---------- */
+function load(i, fromCp) {
+  li = i; lv = LEVELS[i]; theme = THEMES[lv.theme];
+  const width = Math.max(...lv.map.map(r => r.length));
+  // entities always come from the original map; after a death the blocks and coins come from the checkpoint snapshot
+  grid = lv.map.map(r => (r + ' '.repeat(width)).slice(0, width).split(''));
+  enemies = []; plats = []; berries = []; bumps = new Map(); pops = []; checkpoints = [];
+  let start = { x: 2, y: 11 };
+  coinTotal = 0;
+  lv.map.forEach(r => { for (const ch of r) if (ch === 'o' || ch === '?') coinTotal++; });
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < width; x++) {
+    const ch = grid[y][x];
+    if ('EKHZ'.includes(ch)) { enemies.push(makeEnemy(ch, x, y)); grid[y][x] = ' '; }
+    else if (ch === 'M' || ch === 'V') { plats.push({ type: ch, x0: x, y0: y + 0.6, x, y: y + 0.6, w: 3, t: 0, dx: 0, dy: 0 }); grid[y][x] = ' '; }
+    else if (ch === 'S') { start = { x, y }; grid[y][x] = ' '; }
+    else if (ch === 'C') { checkpoints.push({ x, y, on: !!(cp && fromCp && cp.x === x) }); grid[y][x] = ' '; }
+    else if (ch === 'F') { flag = { x, y, raise: 0 }; grid[y][x] = ' '; }
+  }
+  if (fromCp && cp) grid = cp.grid.map(r => r.slice());
+  // after a death, enemies behind the checkpoint stay gone: you already got past them
+  if (fromCp && cp) enemies = enemies.filter(e => e.x > cp.x + 2);
+  const sp = fromCp && cp ? { x: cp.x, y: cp.y } : start;
+  hero = { x: sp.x + 0.15, y: sp.y + 0.1, w: 0.7, h: 0.9, vx: 0, vy: 0, face: 1, ground: false, lastGround: 0, shield: false, inv: 0, sq: 0, plat: null, t: 0 };
+  coins = fromCp && cp ? cp.coins : 0;
+  camX = Math.max(0, hero.x - viewW * 0.4);
+  $('coins').textContent = coins; $('lvlName').textContent = `Ур. ${i + 1}`; $('shield').hidden = true;
+}
+function makeEnemy(type, x, y) {
+  const e = { type, x: x + 0.1, y: y + 0.2, w: 0.8, h: 0.8, vx: -1, vy: 0, dir: -1, alive: true, dead: 0, t: Math.random() * 3, x0: x, y0: y, ground: false, hop: 1 + Math.random() };
+  if (type === 'Z') { e.h = 0.6; e.y = y + 0.2; }
+  return e;
+}
+function startLevel(i) {
+  cp = null; deaths = 0; time = 0;
+  ['menu', 'over', 'pause'].forEach(id => { $(id).hidden = true; });
+  $('hud').hidden = false; $('pad').hidden = false;
+  layout(); load(i, false);
+  state = 'play'; G.wake(true); G.sfx('whistle');
+}
+
+/* ---------- tiles ---------- */
+const tileAt = (x, y) => (x < 0 || x >= grid[0].length) ? '#' : (y < 0 || y >= ROWS) ? ' ' : grid[y][x];
+const solid = (x, y) => SOLID.has(tileAt(x, y));
+const EPS = 1e-4;
+
+// Move a body along one axis and stop it at solid tiles. Returns the tile that stopped it.
+function moveX(b, dx) {
+  b.x += dx;
+  const y0 = Math.floor(b.y + EPS), y1 = Math.floor(b.y + b.h - EPS);
+  if (dx > 0) { const tx = Math.floor(b.x + b.w - EPS); for (let y = y0; y <= y1; y++) if (solid(tx, y)) { b.x = tx - b.w; b.vx = 0; return { x: tx, y }; } }
+  if (dx < 0) { const tx = Math.floor(b.x + EPS); for (let y = y0; y <= y1; y++) if (solid(tx, y)) { b.x = tx + 1; b.vx = 0; return { x: tx, y }; } }
+  return null;
+}
+function moveY(b, dy, oneWay, nudge) {
+  const prevBottom = b.y + b.h;
+  b.y += dy;
+  const x0 = Math.floor(b.x + EPS), x1 = Math.floor(b.x + b.w - EPS);
+  if (dy > 0) {
+    const ty = Math.floor(b.y + b.h - EPS);
+    for (let x = x0; x <= x1; x++) {
+      const ch = tileAt(x, ty);
+      if (SOLID.has(ch) || (oneWay && ch === '=' && prevBottom <= ty + 0.02)) { b.y = ty - b.h; b.vy = 0; return { x, y: ty, ch }; }
+    }
+  }
+  if (dy < 0) {
+    const ty = Math.floor(b.y + EPS);
+    // when the head touches two blocks, the one nearer the centre is the one you hit
+    const cx = b.x + b.w / 2, xs = [x0, x1].sort((a, c) => Math.abs(a + 0.5 - cx) - Math.abs(c + 0.5 - cx));
+    for (const x of xs) if (solid(x, ty)) {
+      // clipped a corner by a few pixels: slide past it instead of bonking (feels much fairer)
+      if (nudge && x0 !== x1) {
+        const over = x === x0 ? x0 + 1 - b.x : b.x + b.w - x1;
+        const other = x === x0 ? x1 : x0;
+        if (over < 0.3 && !solid(other, ty) && !solid(other, ty + 1)) { b.x += x === x0 ? over + EPS : -over - EPS; continue; }
+      }
+      b.y = ty + 1; b.vy = 0; return { x, y: ty, ch: tileAt(x, ty) };
+    }
+  }
+  return null;
+}
+const overlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+
+/* ---------- hero ---------- */
+function stepHero(dt) {
+  const h = hero;
+  h.t += dt; h.inv = Math.max(0, h.inv - dt); h.sq *= Math.pow(0.002, dt);
+  // horizontal
+  const want = input.dir * PH.maxV;
+  const acc = h.ground ? (input.dir ? PH.acc : PH.fric) : PH.air;
+  if (h.vx < want) h.vx = Math.min(want, h.vx + acc * dt); else if (h.vx > want) h.vx = Math.max(want, h.vx - acc * dt);
+  if (input.dir) h.face = input.dir;
+  // jump: buffered press + coyote time
+  if (h.ground) h.lastGround = h.t;
+  const buffered = input.jumpAt >= 0 && h.t - input.jumpAt < 0.13;
+  if (buffered && h.t - h.lastGround < 0.1) {
+    h.vy = -PH.jump; h.ground = false; h.lastGround = -1; h.plat = null; input.jumpAt = -1; h.sq = -0.6;
+    G.sfx('flip', 3); dust(h.x + h.w / 2, h.y + h.h, 6);
+  }
+  // gravity: lighter while rising with the button held, heavier when falling — snappy and controllable
+  const g = h.vy < 0 ? (input.jump ? PH.g : PH.g * 2.6) : PH.g * 1.25;
+  h.vy = Math.min(PH.fall, h.vy + g * dt);
+  // carried by a moving platform
+  if (h.plat) { moveX(h, h.plat.dx); h.y = h.plat.y - h.h; }
+  const hx = moveX(h, h.vx * dt);
+  const wasGround = h.ground; h.ground = false;
+  const prevBottom = h.y + h.h;
+  const hy = moveY(h, h.vy * dt, true, true);
+  if (hy && hy.y >= h.y + h.h - 0.01) {               // landed on a tile
+    h.ground = true; h.plat = null;
+    if (hy.ch === 'J') { h.vy = -PH.spring; h.ground = false; bump(hy.x, hy.y, 'spring'); G.sfx('mult', 6); G.buzz(15); h.sq = -0.8; }
+    else if (!wasGround) { h.sq = 0.7; dust(h.x + h.w / 2, h.y + h.h, 4); }
+  } else if (hy) headHit(hy.x, hy.y);
+  // moving platforms are one-way from above
+  // compare with where the platform was a step ago, or one rising into a falling hero lets him through
+  if (!h.ground && h.vy >= 0) for (const p of plats) {
+    if (h.x + h.w > p.x && h.x < p.x + p.w && prevBottom <= p.y + 0.08 + Math.abs(p.dy) && h.y + h.h >= p.y) {
+      h.y = p.y - h.h; h.vy = 0; h.ground = true; if (!h.plat && !wasGround) h.sq = 0.5; h.plat = p; break;
+    }
+  }
+  if (!h.ground) h.plat = null;
+  if (h.plat && (h.x + h.w < h.plat.x || h.x > h.plat.x + h.plat.w)) h.plat = null;
+  // coins, spikes, lava
+  const x0 = Math.floor(h.x), x1 = Math.floor(h.x + h.w - EPS), y0 = Math.floor(h.y), y1 = Math.floor(h.y + h.h - EPS);
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const ch = tileAt(x, y);
+    if (ch === 'o') { grid[y][x] = ' '; getCoin(x + 0.5, y + 0.5); }
+    else if (ch === '^' && h.y + h.h > y + 0.45) { hurt(); h.vy = -12; }
+    else if (ch === 'L' && h.y + h.h > y + 0.35) return die();
+  }
+  if (h.y > ROWS + 1) return die();
+  // flag
+  if (flag && h.x + h.w > flag.x + 0.3) win();
+}
+function headHit(x, y) {
+  const ch = tileAt(x, y);
+  if (ch === '?') { grid[y][x] = 'U'; bump(x, y); getCoin(x + 0.5, y - 0.5, true); }
+  else if (ch === 'P') { grid[y][x] = 'U'; bump(x, y); berries.push({ x: x + 0.1, y: y - 0.8, w: 0.8, h: 0.8, vx: 2.4, vy: -6, rise: 0.4 }); G.sfx('mult', 2); }
+  else if (ch === 'B') {
+    grid[y][x] = ' '; G.sfx('slice'); G.sfx('bounce'); shake.add(4); G.buzz(15);
+    fx.emit((x + 0.5) * TS - camX * TS, (y + 0.5) * TS, { n: 14, color: [theme.dirt, '#c8743c', '#fff'], speed: 260, life: 0.7, size: TS * 0.18, gravity: 900, shape: 'rect' });
+  } else { G.sfx('wall', 0.3); bump(x, y, 'soft'); }
+  // an enemy standing on the bumped block gets knocked out
+  for (const e of enemies) if (e.alive && Math.abs(e.x + e.w / 2 - (x + 0.5)) < 0.9 && Math.abs(e.y + e.h - y) < 0.2) kill(e, true);
+}
+function bump(x, y, kind) { bumps.set(x + ',' + y, { t: 0, kind }); }
+function getCoin(x, y, fromBlock) {
+  coins++; $('coins').textContent = coins; G.sfx('coin');
+  if (fromBlock) pops.push({ x, y, t: 0 });
+  fx.emit((x - camX) * TS, y * TS, { n: 8, color: ['#ffe066', '#fff'], speed: 160, life: 0.4, size: TS * 0.1, gravity: 0 });
+}
+function dust(x, y, n) { fx.emit((x - camX) * TS, y * TS, { n, color: 'rgba(255,255,255,.7)', speed: 90, life: 0.35, size: TS * 0.12, gravity: -40, angle: -Math.PI / 2, spread: Math.PI }); }
+function hurt() {
+  if (hero.inv > 0 || state !== 'play') return;
+  if (hero.shield) {
+    hero.shield = false; hero.inv = 1.3; $('shield').hidden = true;
+    G.sfx('save'); G.buzz(50); shake.add(8);
+    fx.emit((hero.x + 0.35 - camX) * TS, (hero.y + 0.45) * TS, { n: 24, color: [getComputedStyle(document.documentElement).getPropertyValue('--cyan'), '#fff'], speed: 300, life: 0.5, size: TS * 0.12, gravity: 0 });
+    return;
+  }
+  die();
+}
+function die() {
+  if (state !== 'play') return;
+  state = 'dead'; deadT = 0; deaths++; hero.vy = -16; hero.vx = 0;
+  G.sfx('lose'); G.buzz([60, 40, 120]); shake.add(12);
+}
+function respawn() { load(li, true); state = 'play'; }
+function win() {
+  state = 'win'; winT = 0; hero.vx = 0; G.sfx('win'); G.buzz([30, 40, 30, 40, 80]);
+  const cx = (flag.x - camX) * TS;
+  fx.emit(cx, GH * 0.3, { n: 90, color: ['#ffe066', '#ff5fa8', '#5fd3f3', '#7ee36b'], speed: 600, life: 1.5, size: TS * 0.18, gravity: 500, shape: 'rect' });
+}
+function kill(e, flip) {
+  e.alive = false; e.dead = 0; e.flip = !!flip;
+  fx.emit((e.x + e.w / 2 - camX) * TS, (e.y + e.h / 2) * TS, { n: 12, color: ['#fff', '#ffe066'], speed: 220, life: 0.4, size: TS * 0.1, gravity: 300 });
+}
+
+/* ---------- enemies, platforms, power-ups ---------- */
+function stepEnemies(dt) {
+  for (const e of enemies) {
+    if (!e.alive) { e.dead += dt; continue; }
+    if (Math.abs(e.x - (camX + viewW / 2)) > viewW * 0.5 + 3) continue;    // asleep until on screen
+    e.t += dt;
+    if (e.type === 'Z') {                                                // bat: patrols in the air on a sine
+      e.x += e.dir * 1.4 * dt; if (Math.abs(e.x - e.x0) > 3) e.dir = -Math.sign(e.x - e.x0);
+      e.y = e.y0 + 0.2 + Math.sin(e.t * 3) * 1.1;
+    } else {
+      if (e.type === 'H') {                                              // hopper: jumps toward you
+        if (e.ground) { e.vx = 0; e.hop -= dt; if (e.hop <= 0) { e.vy = -15; e.dir = hero.x < e.x ? -1 : 1; e.vx = e.dir * 3; e.hop = 1.2 + Math.random() * 0.6; e.ground = false; } }
+      } else e.vx = e.dir * (e.type === 'K' ? 1.5 : 1.9);
+      e.vy = Math.min(PH.fall, e.vy + PH.g * dt);
+      if (moveX(e, e.vx * dt)) e.dir = -e.dir;
+      const hit = moveY(e, e.vy * dt, true);
+      e.ground = !!(hit && hit.y >= e.y + e.h - 0.01);
+      // walkers turn around at ledges instead of walking off
+      if (e.ground && e.type !== 'H') {
+        const fx2 = Math.floor(e.dir > 0 ? e.x + e.w + 0.05 : e.x - 0.05), fy = Math.floor(e.y + e.h + 0.1);
+        const ch = tileAt(fx2, fy);
+        if (!SOLID.has(ch) && ch !== '=') e.dir = -e.dir;
+      }
+      if (e.y > ROWS + 1 || tileAt(Math.floor(e.x + e.w / 2), Math.floor(e.y + e.h - 0.1)) === 'L') { e.alive = false; e.dead = 9; }
+    }
+    // contact with the hero
+    // generous on purpose: any contact while falling onto the upper part is a stomp, and the
+    // side hitbox is a little smaller than the drawing, so near-misses go your way
+    const soft = { x: e.x + 0.1, y: e.y + 0.1, w: e.w - 0.2, h: e.h - 0.1 };
+    if (state === 'play' && overlap(hero, hero.vy > 1 ? e : soft)) {
+      const fromAbove = hero.vy > 1 && hero.y + hero.h - e.y < e.h * 0.75;
+      if (fromAbove && e.type !== 'K') {
+        kill(e); hero.vy = -(input.jump ? PH.stompHeld : PH.stomp); hero.ground = false;
+        G.sfx('kick'); G.buzz(20); shake.add(5); hero.sq = -0.5;
+      } else hurt();
+    }
+  }
+  enemies = enemies.filter(e => e.alive || e.dead < 0.6);
+}
+function stepPlats(dt) {
+  for (const p of plats) {
+    p.t += dt;
+    const ox = p.x, oy = p.y;
+    if (p.type === 'M') p.x = p.x0 + 3 + Math.sin(p.t * 0.9 - Math.PI / 2) * 3;
+    else p.y = p.y0 - 3 + Math.sin(p.t * 0.8 + Math.PI / 2) * 3;
+    p.dx = p.x - ox; p.dy = p.y - oy;
+  }
+}
+function stepBerries(dt) {
+  for (const b of berries) {
+    if (b.rise > 0) { b.rise -= dt; b.y -= dt * 1.2; continue; }
+    b.vy = Math.min(PH.fall, b.vy + PH.g * dt);
+    if (moveX(b, b.vx * dt)) b.vx = -b.vx;
+    moveY(b, b.vy * dt, true);
+    if (overlap(hero, b)) {
+      b.got = true;
+      if (hero.shield) { coins += 5; $('coins').textContent = coins; G.sfx('coin'); }
+      else { hero.shield = true; $('shield').hidden = false; G.sfx('goal'); G.buzz([20, 30, 20]); }
+    }
+  }
+  berries = berries.filter(b => !b.got && b.y < ROWS + 2);
+}
+
+/* ---------- loop ---------- */
+let acc = 0;
+G.loop(dt => {
+  if (state === 'play' || state === 'dead' || state === 'win') {
+    acc += dt;
+    while (acc >= STEP) {
+      acc -= STEP;
+      if (state === 'play') { time += STEP; stepPlats(STEP); stepHero(STEP); stepEnemies(STEP); stepBerries(STEP); }
+      else if (state === 'dead') { deadT += STEP; hero.vy += PH.g * STEP; hero.y += hero.vy * STEP; }
+      else if (state === 'win') { winT += STEP; stepPlats(STEP); flag.raise = Math.min(1, flag.raise + STEP * 1.5); }
+    }
+    if (state === 'dead' && deadT > 1.2) respawn();
+    if (state === 'win' && winT > 1.7) { state = 'done'; showResult(); }
+    // checkpoint flags
+    for (const c of checkpoints) if (!c.on && state === 'play' && hero.x > c.x - 0.3) {
+      c.on = true; cp = { x: c.x, y: c.y, coins, grid: grid.map(r => r.slice()) };
+      G.sfx('coin'); G.sfx('flip', 6); G.toast('Чекпоинт');
+    }
+    for (const [k, b] of bumps) { b.t += dt; if (b.t > 0.25) bumps.delete(k); }
+    pops.forEach(p => { p.t += dt; }); pops = pops.filter(p => p.t < 0.5);
+    // camera: looks ahead in the direction you face
+    const target = Math.max(0, Math.min(grid[0].length - viewW, hero.x - viewW * 0.42 + hero.face * viewW * 0.08));
+    camX += (target - camX) * Math.min(1, dt * 6);
+  }
+  fx.update(dt); shake.update(dt);
+  if (lv) draw();
+});
+
+/* ---------- render ---------- */
+function paintSky(c) {
+  const g = c.createLinearGradient(0, 0, 0, GH); g.addColorStop(0, theme.sky[0]); g.addColorStop(1, theme.sky[1]);
+  c.fillStyle = g; c.fillRect(-20, -20, W + 40, GH + 40);
+  if (lv.theme === 'night') {
+    c.fillStyle = '#fff'; for (let i = 0; i < 50; i++) c.fillRect((i * 97.3) % W, (i * 41.9) % (GH * 0.6), 2, 2);
+    c.fillStyle = '#fff6c8'; c.beginPath(); c.arc(W * 0.78, GH * 0.16, TS * 1.1, 0, 7); c.fill();
+  }
+  if (lv.theme === 'sunset') { c.fillStyle = '#ffd36b'; c.beginPath(); c.arc(W * 0.7, GH * 0.55, TS * 2.2, 0, 7); c.fill(); }
+  if (lv.theme === 'meadow' || lv.theme === 'hills' || lv.theme === 'clouds') {
+    c.fillStyle = 'rgba(255,255,255,.85)';
+    [[0.15, 0.12], [0.6, 0.2], [0.85, 0.08]].forEach(([x, y]) => { const cx = W * x, cy = GH * y, r = TS * 0.6; c.beginPath(); c.arc(cx, cy, r, 0, 7); c.arc(cx + r, cy - r * 0.4, r * 1.1, 0, 7); c.arc(cx + r * 2, cy, r * 0.8, 0, 7); c.fill(); });
+  }
+}
+function paintHills(c) {                       // one screen-wide strip of far scenery, tiled with parallax
+  c.fillStyle = theme.far;
+  c.beginPath(); c.moveTo(-20, GH + 20);
+  for (let x = -20; x <= W + 20; x += 8) c.lineTo(x, GH * 0.62 + Math.sin(x / W * Math.PI * 4) * TS * 1.2 + Math.sin(x / W * Math.PI * 10) * TS * 0.3);
+  c.lineTo(W + 20, GH + 20); c.fill();
+  if (lv.theme === 'cave' || lv.theme === 'castle' || lv.theme === 'mine') {
+    c.fillStyle = 'rgba(0,0,0,.25)';
+    for (let i = 0; i < 6; i++) { const x = (i + 0.3) * W / 6; c.fillRect(x, GH * 0.25, TS * 0.5, GH * 0.5); }
+  }
+}
+function draw() {
+  ctx.save(); ctx.translate(shake.x, shake.y);
+  G.blit(ctx, G.layer('jsky' + lv.theme, W, GH, paintSky), W, GH);
+  const hills = G.layer('jhill' + lv.theme, W, GH, paintHills);
+  const off = -((camX * TS * 0.3) % W);
+  ctx.drawImage(hills, off - 20, -20, W + 40, GH + 40); ctx.drawImage(hills, off + W - 20, -20, W + 40, GH + 40);
+  ctx.save(); ctx.translate(-Math.round(camX * TS), 0);
+  const x0 = Math.max(0, Math.floor(camX) - 1), x1 = Math.min(grid[0].length - 1, Math.ceil(camX + viewW) + 1), now = performance.now() / 1000;
+  for (let y = 0; y < ROWS; y++) for (let x = x0; x <= x1; x++) { const ch = grid[y][x]; if (ch !== ' ') drawTile(ch, x, y, now); }
+  for (const c of checkpoints) drawPost(c.x, c.y, c.on);
+  if (flag) drawFlag();
+  for (const p of plats) { const px = p.x * TS, py = p.y * TS; ctx.fillStyle = '#e8d6a8'; ctx.fillRect(px, py, p.w * TS, TS * 0.32); ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(px, py + TS * 0.22, p.w * TS, TS * 0.1); }
+  for (const b of berries) drawBerry(b.x * TS, b.y * TS, now);
+  for (const p of pops) { const k = p.t / 0.5; drawCoin(p.x * TS, (p.y - k * 1.6) * TS, now * 3, 1 - k); }
+  for (const e of enemies) drawEnemy(e, now);
+  drawHero(now);
+  ctx.restore();
+  fx.draw(ctx);
+  ctx.restore();
+}
+function drawTile(ch, x, y, now) {
+  const b = bumps.get(x + ',' + y), lift = b && b.kind !== 'spring' ? Math.sin(b.t / 0.25 * Math.PI) * TS * 0.25 : 0;
+  const px = x * TS, py = y * TS - lift, s = TS;
+  switch (ch) {
+    case '#': {
+      ctx.fillStyle = theme.dirt; ctx.fillRect(px, py, s + 0.5, s + 0.5);
+      ctx.fillStyle = theme.dirt2; if ((x + y) % 3 === 0) ctx.fillRect(px + s * 0.2, py + s * 0.55, s * 0.18, s * 0.14);
+      if (!SOLID.has(tileAt(x, y - 1)) && tileAt(x, y - 1) !== 'L') { ctx.fillStyle = theme.top; ctx.fillRect(px, py, s + 0.5, s * 0.28); ctx.fillRect(px + s * 0.15, py + s * 0.28, s * 0.2, s * 0.1); ctx.fillRect(px + s * 0.6, py + s * 0.28, s * 0.25, s * 0.08); }
+      break;
+    }
+    case 'X': ctx.fillStyle = theme.stone; ctx.fillRect(px, py, s, s); ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.fillRect(px, py, s, s * 0.12); ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(px, py + s * 0.88, s, s * 0.12); ctx.fillRect(px + s * 0.88, py, s * 0.12, s); break;
+    case 'B': ctx.fillStyle = '#c8743c'; ctx.fillRect(px, py, s, s); ctx.fillStyle = '#7a3f1c';
+      ctx.fillRect(px, py + s * 0.47, s, s * 0.06); ctx.fillRect(px, py + s * 0.94, s, s * 0.06); ctx.fillRect(px + s * 0.47, py, s * 0.06, s * 0.47); ctx.fillRect(px + s * 0.2, py + s * 0.5, s * 0.06, s * 0.47); ctx.fillRect(px + s * 0.75, py + s * 0.5, s * 0.06, s * 0.47); break;
+    case '?': case 'P': {
+      const glow = 0.85 + Math.sin(now * 4) * 0.15;
+      ctx.fillStyle = `hsl(45 95% ${55 * glow}%)`; ctx.fillRect(px + 1, py + 1, s - 2, s - 2);
+      ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(px + 1, py + s * 0.86, s - 2, s * 0.14 - 1);
+      ctx.fillStyle = '#7a4a10'; ctx.font = `900 ${Math.round(s * 0.62)}px Rubik, system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('?', px + s / 2, py + s * 0.5);
+      break;
+    }
+    case 'U': ctx.fillStyle = '#8a6a4a'; ctx.fillRect(px + 1, py + 1, s - 2, s - 2); ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(px + s * 0.2, py + s * 0.2, s * 0.12, s * 0.12); ctx.fillRect(px + s * 0.68, py + s * 0.2, s * 0.12, s * 0.12); break;
+    case 'J': {
+      const squash = b && b.kind === 'spring' ? Math.sin(b.t / 0.25 * Math.PI) * 0.35 : 0;
+      ctx.fillStyle = '#555'; ctx.fillRect(px + s * 0.1, py + s * 0.8, s * 0.8, s * 0.2);
+      ctx.strokeStyle = '#ddd'; ctx.lineWidth = s * 0.08; ctx.beginPath();
+      for (let i = 0; i <= 4; i++) ctx.lineTo(px + s * (i % 2 ? 0.3 : 0.7), py + s * (0.8 - (0.55 - squash * 0.5) * i / 4));
+      ctx.stroke(); ctx.fillStyle = '#ff4f6a'; ctx.fillRect(px + s * 0.05, py + s * (0.12 + squash * 0.28), s * 0.9, s * 0.16);
+      break;
+    }
+    case '=': ctx.fillStyle = '#e8d6a8'; ctx.fillRect(px, py, s + 0.5, s * 0.3); ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.fillRect(px, py + s * 0.22, s + 0.5, s * 0.08); break;
+    case '^': ctx.fillStyle = '#d8d8e8'; for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(px + s * i / 3, py + s); ctx.lineTo(px + s * (i + 0.5) / 3, py + s * 0.45); ctx.lineTo(px + s * (i + 1) / 3, py + s); ctx.fill(); } break;
+    case 'L': {
+      const top = tileAt(x, y - 1) !== 'L';
+      ctx.fillStyle = '#ff5a1f'; ctx.fillRect(px, py, s + 0.5, s + 0.5);
+      if (top) { ctx.fillStyle = '#ffb21f'; ctx.beginPath(); ctx.moveTo(px, py + s * 0.3); for (let i = 0; i <= 4; i++) ctx.lineTo(px + s * i / 4, py + s * (0.22 + Math.sin(now * 4 + x + i) * 0.1)); ctx.lineTo(px + s, py + s * 0.4); ctx.lineTo(px, py + s * 0.4); ctx.fill(); }
+      break;
+    }
+    case 'o': drawCoin(px + s / 2, py + s / 2, now * 3 + x * 0.4, 1); break;
+  }
+}
+function drawCoin(cx, cy, phase, alpha) {
+  const r = TS * 0.3, sx = Math.abs(Math.cos(phase)) * 0.75 + 0.25;
+  ctx.globalAlpha = alpha; ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.ellipse(cx, cy, r * sx, r, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fff3a6'; ctx.beginPath(); ctx.ellipse(cx - r * 0.2 * sx, cy - r * 0.2, r * 0.3 * sx, r * 0.45, 0, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+}
+function drawBerry(px, py, now) {
+  const s = TS * 0.8, cx = px + s / 2, cy = py + s / 2;
+  ctx.fillStyle = 'rgba(95,211,243,.35)'; ctx.beginPath(); ctx.arc(cx, cy, s * (0.7 + Math.sin(now * 6) * 0.06), 0, 7); ctx.fill();
+  ctx.fillStyle = '#5fd3f3'; ctx.beginPath(); ctx.arc(cx, cy, s * 0.42, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx - s * 0.12, cy - s * 0.12, s * 0.1, 0, 7); ctx.fill();
+  ctx.fillStyle = '#7ee36b'; ctx.fillRect(cx - s * 0.05, cy - s * 0.6, s * 0.1, s * 0.2);
+}
+function drawPost(x, y, on) {
+  const px = x * TS + TS * 0.4, py = (y + 1) * TS;
+  ctx.fillStyle = '#ddd'; ctx.fillRect(px, py - TS * 1.8, TS * 0.12, TS * 1.8);
+  ctx.fillStyle = on ? '#7ee36b' : '#777'; ctx.beginPath(); ctx.moveTo(px + TS * 0.12, py - TS * 1.8); ctx.lineTo(px + TS * 0.9, py - TS * 1.55); ctx.lineTo(px + TS * 0.12, py - TS * 1.3); ctx.fill();
+}
+function drawFlag() {
+  const px = flag.x * TS + TS * 0.45, base = (flag.y + 1) * TS, top = base - TS * 8;
+  ctx.fillStyle = '#6a6a7a'; ctx.fillRect(px - TS * 0.3, base - TS * 0.4, TS * 0.7, TS * 0.4);
+  ctx.fillStyle = '#eee'; ctx.fillRect(px, top, TS * 0.14, base - top);
+  ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.arc(px + TS * 0.07, top, TS * 0.2, 0, 7); ctx.fill();
+  const fy = top + TS * 0.3 + (1 - flag.raise) * TS * 5.5, wave = Math.sin(performance.now() / 150) * TS * 0.08;
+  ctx.fillStyle = '#ff5fa8'; ctx.beginPath(); ctx.moveTo(px + TS * 0.14, fy); ctx.lineTo(px + TS * 1.4, fy + TS * 0.4 + wave); ctx.lineTo(px + TS * 0.14, fy + TS * 0.85); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px + TS * 0.55, fy + TS * 0.42, TS * 0.13, 0, 7); ctx.fill();
+}
+function drawEnemy(e, now) {
+  const px = e.x * TS, py = e.y * TS, w = e.w * TS, h = e.h * TS;
+  ctx.save(); ctx.translate(px + w / 2, py + h);
+  if (!e.alive) { const k = Math.min(1, e.dead / 0.5); if (e.flip) { ctx.translate(0, -k * TS); ctx.scale(1, -1); } else ctx.scale(1 + k * 0.4, 1 - k * 0.75); ctx.globalAlpha = 1 - k * 0.6; }
+  const wob = Math.sin(now * 8 + e.x0) * 0.06;
+  if (e.type === 'E') {                                         // slime
+    ctx.scale(1 + wob, 1 - wob);
+    ctx.fillStyle = '#5ccf4a'; ctx.beginPath(); ctx.moveTo(-w / 2, 0); ctx.quadraticCurveTo(-w / 2, -h * 1.05, 0, -h); ctx.quadraticCurveTo(w / 2, -h * 1.05, w / 2, 0); ctx.fill();
+    eyes(w, h, e.dir, '#1b1530');
+  } else if (e.type === 'K') {                                  // spiky
+    ctx.fillStyle = '#c9c3e6';
+    for (let i = 0; i < 5; i++) { const a = Math.PI + Math.PI * (i + 0.5) / 5; ctx.beginPath(); ctx.moveTo(Math.cos(a - 0.25) * w * 0.4, -h * 0.4 + Math.sin(a - 0.25) * h * 0.4); ctx.lineTo(Math.cos(a) * w * 0.75, -h * 0.4 + Math.sin(a) * h * 0.75); ctx.lineTo(Math.cos(a + 0.25) * w * 0.4, -h * 0.4 + Math.sin(a + 0.25) * h * 0.4); ctx.fill(); }
+    ctx.fillStyle = '#8b4fd8'; ctx.beginPath(); ctx.ellipse(0, -h * 0.4, w * 0.48, h * 0.42, 0, 0, 7); ctx.fill();
+    eyes(w, h * 0.9, e.dir, '#fff');
+  } else if (e.type === 'H') {                                  // hopper
+    const stretch = e.ground ? 1 : 1.15;
+    ctx.scale(1 / stretch, stretch);
+    ctx.fillStyle = '#ff8a3d'; ctx.beginPath(); ctx.ellipse(0, -h * 0.45, w * 0.5, h * 0.45, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#ffd0a8'; ctx.beginPath(); ctx.ellipse(0, -h * 0.25, w * 0.3, h * 0.2, 0, 0, 7); ctx.fill();
+    eyes(w, h, e.dir, '#1b1530');
+  } else if (e.type === 'Z') {                                  // bat
+    const flap = Math.sin(now * 18) * 0.5;
+    ctx.fillStyle = '#3a2a5e';
+    [-1, 1].forEach(s => { ctx.beginPath(); ctx.moveTo(s * w * 0.2, -h * 0.5); ctx.lineTo(s * w * 0.95, -h * (0.9 + flap * 0.6)); ctx.lineTo(s * w * 0.7, -h * 0.35); ctx.lineTo(s * w * 0.45, -h * 0.5); ctx.fill(); });
+    ctx.fillStyle = '#5a3f8e'; ctx.beginPath(); ctx.arc(0, -h * 0.5, w * 0.3, 0, 7); ctx.fill();
+    ctx.fillStyle = '#ffe066'; ctx.fillRect(-w * 0.15, -h * 0.6, w * 0.1, w * 0.1); ctx.fillRect(w * 0.05, -h * 0.6, w * 0.1, w * 0.1);
+  }
+  ctx.restore(); ctx.globalAlpha = 1;
+}
+function eyes(w, h, dir, pupil) {
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.ellipse(-w * 0.17 + dir * w * 0.06, -h * 0.55, w * 0.13, h * 0.16, 0, 0, 7); ctx.ellipse(w * 0.17 + dir * w * 0.06, -h * 0.55, w * 0.13, h * 0.16, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = pupil;
+  ctx.beginPath(); ctx.arc(-w * 0.17 + dir * w * 0.1, -h * 0.53, w * 0.06, 0, 7); ctx.arc(w * 0.17 + dir * w * 0.1, -h * 0.53, w * 0.06, 0, 7); ctx.fill();
+}
+// Пинки: a round pink hero with big eyes and little feet; squashes on landing, stretches on jumps.
+function drawHero(now) {
+  const h = hero;
+  if (h.inv > 0 && Math.floor(now * 14) % 2 === 0) return;
+  const w = h.w * TS, hh = h.h * TS, cx = (h.x + h.w / 2) * TS, by = (h.y + h.h) * TS;
+  const sq = state === 'dead' ? 0 : h.sq, sx = 1 + sq * 0.3, sy = 1 - sq * 0.3;
+  ctx.save(); ctx.translate(cx, by);
+  if (state === 'dead') ctx.rotate(Math.min(deadT * 6, Math.PI));
+  ctx.scale(sx, sy);
+  if (h.shield) { ctx.fillStyle = `rgba(95,211,243,${0.28 + Math.sin(now * 8) * 0.08})`; ctx.beginPath(); ctx.arc(0, -hh * 0.5, w * 0.95, 0, 7); ctx.fill(); }
+  const run = h.ground && Math.abs(h.vx) > 0.5 ? Math.sin(h.t * 22) : 0;
+  ctx.fillStyle = '#c23a7a';                                     // feet
+  ctx.beginPath(); ctx.ellipse(-w * 0.22 + run * w * 0.1, -hh * 0.05, w * 0.18, hh * 0.09, 0, 0, 7); ctx.ellipse(w * 0.22 - run * w * 0.1, -hh * 0.05, w * 0.18, hh * 0.09, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#ff5fa8';                                     // body
+  ctx.beginPath(); ctx.ellipse(0, -hh * 0.52, w * 0.52, hh * 0.47, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.beginPath(); ctx.ellipse(-w * 0.2, -hh * 0.78, w * 0.14, hh * 0.08, -0.5, 0, 7); ctx.fill();
+  const f = h.face, look = state === 'dead' ? 0 : f * w * 0.1;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.ellipse(-w * 0.14 + look, -hh * 0.58, w * 0.14, hh * 0.17, 0, 0, 7); ctx.ellipse(w * 0.16 + look, -hh * 0.58, w * 0.14, hh * 0.17, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#1b1530';
+  if (state === 'dead') { ctx.font = `900 ${Math.round(hh * 0.3)}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('x', -w * 0.14, -hh * 0.58); ctx.fillText('x', w * 0.16, -hh * 0.58); }
+  else { ctx.beginPath(); ctx.arc(-w * 0.12 + look * 1.4, -hh * 0.56, w * 0.065, 0, 7); ctx.arc(w * 0.18 + look * 1.4, -hh * 0.56, w * 0.065, 0, 7); ctx.fill(); }
+  ctx.fillStyle = '#ffb3d6'; ctx.beginPath(); ctx.ellipse(-w * 0.3 + look, -hh * 0.38, w * 0.08, hh * 0.05, 0, 0, 7); ctx.ellipse(w * 0.32 + look, -hh * 0.38, w * 0.08, hh * 0.05, 0, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+/* ---------- results & menus ---------- */
+function showResult() {
+  G.wake(false);
+  const s = 1 + (coins >= coinTotal ? 1 : 0) + (deaths === 0 ? 1 : 0);
+  const old = stars[li] || 0;
+  if (s > old) { stars[li] = s; G.set('jump.stars', stars); }
+  $('stars').innerHTML = '★'.repeat(s) + `<i>${'★'.repeat(3 - s)}</i>`;
+  const mm = Math.floor(time / 60), ss = String(Math.floor(time % 60)).padStart(2, '0');
+  $('stats').innerHTML = `<span>Монетки: ${coins} из ${coinTotal}${coins >= coinTotal ? ' ★' : ''}</span><span>Падений: ${deaths}${deaths === 0 ? ' ★' : ''}</span><span>Время: ${mm}:${ss}</span>`;
+  $('overTitle').textContent = li === LEVELS.length - 1 ? 'Замок пройден!' : 'Уровень пройден!';
+  $('next').hidden = li >= LEVELS.length - 1;
+  $('hud').hidden = true; $('pad').hidden = true; $('over').hidden = false;
+}
+function levelMenu() {
+  state = 'menu'; G.wake(false);
+  ['over', 'pause'].forEach(id => { $(id).hidden = true; });
+  $('hud').hidden = true; $('pad').hidden = true;
+  $('levels').innerHTML = LEVELS.map((l, i) => {
+    const open = i === 0 || (stars[i - 1] || 0) > 0, s = stars[i] || 0;
+    return `<button class="lvl" type="button" data-l="${i}" ${open ? '' : 'disabled'}><b>${open ? i + 1 : '🔒'}</b><span>${l.name}</span><span class="st">${'★'.repeat(s)}${'☆'.repeat(3 - s)}</span></button>`;
+  }).join('');
+  $('levels').querySelectorAll('[data-l]').forEach(b => b.addEventListener('click', () => { G.sfx('tap'); startLevel(+b.dataset.l); }));
+  $('menu').hidden = false;
+}
+function pause() { if (state !== 'play') return; state = 'paused'; G.wake(false); $('pause').hidden = false; input.dir = 0; input.jump = false; }
+$('resume').addEventListener('click', () => { $('pause').hidden = true; state = 'play'; G.wake(true); });
+$('restart').addEventListener('click', () => startLevel(li));
+$('toLevels').addEventListener('click', levelMenu);
+$('again').addEventListener('click', () => startLevel(li));
+$('next').addEventListener('click', () => startLevel(li + 1));
+$('overLevels').addEventListener('click', levelMenu);
+document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+
+/* ---------- controls ---------- */
+// The whole pad is the hit area: left of the jump button steers (slide between ◀ and ▶ without lifting),
+// the rest jumps. Thumbs don't have to land exactly on a button.
+const padEl = $('pad'), dpad = $('dpad'), jb = $('jumpBtn'), dpadPtr = new Map(), jumpPtr = new Set();
+function syncDir() {
+  const ds = [...dpadPtr.values()]; input.dir = ds.length ? ds[ds.length - 1] : 0;
+  dpad.querySelectorAll('span').forEach(s => s.classList.toggle('on', ds.includes(+s.dataset.d)));
+}
+const dirAt = e => { const r = dpad.getBoundingClientRect(); return e.clientX < r.left + r.width / 2 ? -1 : 1; };
+const isJumpSide = e => { const r = jb.getBoundingClientRect(), d = dpad.getBoundingClientRect(); return e.clientX > (d.right + r.left) / 2; };
+const jumpDown = () => { input.jump = true; input.jumpAt = hero ? hero.t : 0; jb.classList.add('on'); };
+const jumpUp = () => { if (jumpPtr.size) return; input.jump = false; jb.classList.remove('on'); };
+padEl.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  try { padEl.setPointerCapture(e.pointerId); } catch {}
+  if (isJumpSide(e)) { jumpPtr.add(e.pointerId); jumpDown(); G.buzz(6); }
+  else { dpadPtr.set(e.pointerId, dirAt(e)); syncDir(); G.buzz(5); }
+});
+padEl.addEventListener('pointermove', e => { if (dpadPtr.has(e.pointerId)) { const d = dirAt(e); if (d !== dpadPtr.get(e.pointerId)) { dpadPtr.set(e.pointerId, d); syncDir(); G.buzz(4); } } });
+const padUp = e => {
+  if (dpadPtr.delete(e.pointerId)) syncDir();
+  if (jumpPtr.delete(e.pointerId)) jumpUp();
+};
+padEl.addEventListener('pointerup', padUp); padEl.addEventListener('pointercancel', padUp);
+const keys = new Set();
+addEventListener('keydown', e => {
+  if (e.repeat) return;
+  if (['ArrowLeft', 'KeyA'].includes(e.code)) keys.add(-1);
+  if (['ArrowRight', 'KeyD'].includes(e.code)) keys.add(1);
+  if (['Space', 'ArrowUp', 'KeyW', 'KeyZ'].includes(e.code)) { e.preventDefault(); jumpDown(); }
+  if (e.code === 'Escape') pause();
+  input.dir = keys.has(1) && !keys.has(-1) ? 1 : keys.has(-1) && !keys.has(1) ? -1 : (dpadPtr.size ? input.dir : 0);
+});
+addEventListener('keyup', e => {
+  if (['ArrowLeft', 'KeyA'].includes(e.code)) keys.delete(-1);
+  if (['ArrowRight', 'KeyD'].includes(e.code)) keys.delete(1);
+  if (['Space', 'ArrowUp', 'KeyW', 'KeyZ'].includes(e.code)) jumpUp();
+  input.dir = keys.has(1) ? 1 : keys.has(-1) ? -1 : 0;
+});
+
+G.topbar({ pause });
+layout(); levelMenu();
+// a level drawn behind the menu so it doesn't open on an empty screen
+load(0, false);
+window.__jump = { input, get hero() { return hero; }, get state() { return state; }, get enemies() { return enemies; }, get coins() { return coins; }, get grid() { return grid; }, get cp() { return cp; }, startLevel, LEVELS, get camX() { return camX; } };   // for automated checks
+window.__jumpPlats = () => plats;
+// test hooks: save/restore the whole simulation and step it, so a planning bot can try moves ahead
+window.__jumpSim = {
+  snap: () => structuredClone({ hero: { ...hero, plat: hero.plat ? plats.indexOf(hero.plat) : -1 }, enemies, plats, berries, grid, coins, state, time, input: { ...input } }),
+  restore: s => { const c = structuredClone(s); ({ enemies, plats, berries, grid, coins, state, time } = c); hero = c.hero; hero.plat = c.hero.plat >= 0 ? plats[c.hero.plat] : null; Object.assign(input, c.input); },
+  step: () => { if (state === 'play') { time += STEP; stepPlats(STEP); stepHero(STEP); stepEnemies(STEP); stepBerries(STEP); } },
+  quiet: on => { fx.quiet = on; },
+};
+})();
+</script>
+</body>
+</html>
