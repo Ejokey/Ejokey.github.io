@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#140f24">
+<title>Баскетбол — Игротека</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="common.css">
+<style>
+  html, body { overflow: hidden; touch-action: none; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .hud {
+    position: fixed; left: 0; right: 0; top: calc(70px + env(safe-area-inset-top)); z-index: 5;
+    display: flex; justify-content: center; gap: 22px; pointer-events: none; font-weight: 900;
+  }
+  .hud div { display: grid; justify-items: center; }
+  .hud small { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em; }
+  .hud b { font-size: 30px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .table { display: grid; gap: 6px; text-align: left; font-weight: 800; font-size: 18px; }
+  .table div { display: flex; justify-content: space-between; padding: 10px 14px; border-radius: 12px; background: var(--ink-2); }
+  .table div.win { background: var(--yellow); color: var(--on-color); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud" id="hud" hidden>
+  <div><small id="whoLbl">ОЧКИ</small><b id="score">0</b></div>
+  <div><small>ВРЕМЯ</small><b id="time">60</b></div>
+  <div><small>РЕКОРД</small><b id="best">0</b></div>
+</div>
+
+<div class="overlay" id="menu">
+  <div class="panel">
+    <h1>Баскет&shy;бол</h1>
+    <p>Свайпни мяч вверх к кольцу. Длина свайпа — сила броска. Три чистых подряд — и ты «в огне», очки ×2.</p>
+    <div class="seg" role="group" aria-label="Игроки">
+      <button type="button" data-n="1" aria-pressed="true">Один</button>
+      <button type="button" data-n="2" aria-pressed="false">2</button>
+      <button type="button" data-n="3" aria-pressed="false">3</button>
+      <button type="button" data-n="4" aria-pressed="false">4</button>
+    </div>
+    <p id="nHint" hidden>Играете по очереди: у каждого 60 секунд, телефон передаёте дальше.</p>
+    <button class="btn" type="button" id="start">Играть</button>
+  </div>
+</div>
+
+<div class="overlay" id="turn" hidden>
+  <div class="panel">
+    <h1 id="turnTitle"></h1>
+    <p>60 секунд. Бросай как можно точнее.</p>
+    <button class="btn" type="button" id="turnGo">Поехали</button>
+  </div>
+</div>
+
+<div class="overlay" id="over" hidden>
+  <div class="panel">
+    <h1 id="overTitle">Время!</h1>
+    <div class="big" id="overScore"></div>
+    <p id="overNote"></p>
+    <div class="table" id="overTable" hidden></div>
+    <div class="choices">
+      <button class="btn" type="button" id="again">Ещё раз</button>
+      <button class="btn ghost" type="button" id="overMenu">Меню</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const canvas = $('c');
+let W, H, ctx;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COL = { orange: css('--orange'), yellow: css('--yellow'), pink: css('--pink'), cyan: css('--cyan'), lime: css('--lime'), red: css('--red'), text: css('--text') };
+const PCOL = [COL.pink, COL.cyan, COL.lime, COL.yellow];
+
+const ROUND = 60;
+let nPlayers = G.get('basket.n', 1), current = 0, scores = [];
+let state = 'menu', time = ROUND, score = 0, streak = 0, fire = false, made = 0;
+let hoop, ballHome, R, ball = null, swipe = null, popups = [], netSway = 0, hoopT = 0;
+const fx = new G.Particles(), shake = new G.Shake();
+
+function layout() {
+  ({ w: W, h: H, ctx } = G.fit(canvas));
+  const rw = Math.min(W * 0.3, H * 0.17);
+  hoop = { x: W / 2, baseX: W / 2, y: H * 0.34, rw, rh: rw * 0.22 };
+  R = Math.min(W * 0.12, H * 0.065);
+  ballHome = { x: W / 2, y: H * 0.84 };
+}
+addEventListener('resize', layout);
+
+/* ---------- input ---------- */
+canvas.addEventListener('pointerdown', e => {
+  if (state !== 'play' || ball) return;
+  if (Math.hypot(e.clientX - ballHome.x, e.clientY - ballHome.y) > R * 2.6) return;
+  swipe = { x0: e.clientX, y0: e.clientY, t0: performance.now(), x: e.clientX, y: e.clientY, id: e.pointerId };
+  try { canvas.setPointerCapture(e.pointerId); } catch {}
+});
+canvas.addEventListener('pointermove', e => { if (swipe && e.pointerId === swipe.id) { swipe.x = e.clientX; swipe.y = e.clientY; } });
+canvas.addEventListener('pointerup', e => {
+  if (!swipe || e.pointerId !== swipe.id) return;
+  const s = swipe; swipe = null;
+  const dx = s.x - s.x0, dy = s.y0 - s.y, dur = Math.max(50, performance.now() - s.t0);
+  if (dy < H * 0.05) return;
+  // Distance comes mostly from swipe length, a little from speed; a fast flick adds a bit.
+  const power = (dy / (H * 0.36)) * 0.8 + Math.min(0.35, (dy / dur) / 4);
+  const aimX = ballHome.x + dx / dy * (ballHome.y - hoop.y);
+  throwBall(aimX, power);
+});
+
+/* ---------- throw & resolve ---------- */
+function throwBall(aimX, power) {
+  const depthErr = power - 1;                       // <0 short, >0 long
+  const xErr = aimX - hoop.x;                       // at the moment of release; the hoop may still move
+  ball = { t: 0, dur: 0.78, x0: ballHome.x, y0: ballHome.y, aimX, depthErr, power, phase: 'fly', spin: 0, vx: 0, vy: 0, x: ballHome.x, y: ballHome.y, s: 1 };
+  G.sfx('throw'); G.buzz(10);
+}
+function judge() {
+  const xErr = (ball.aimX - hoop.x) / hoop.rw, d = ball.depthErr;
+  if (Math.abs(d) < 0.075 && Math.abs(xErr) < 0.2) return 'swish';
+  if (Math.abs(d) < 0.15 && Math.abs(xErr) < 0.42) return Math.random() < 0.55 ? 'rimIn' : 'rimOut';
+  if (d > 0.15 && d < 0.4 && Math.abs(xErr) < 0.7) return Math.random() < 0.3 ? 'boardIn' : 'boardOut';
+  return d < 0 ? 'short' : 'long';
+}
+function landed(kind) {
+  const ok = kind === 'swish' || kind === 'rimIn' || kind === 'boardIn';
+  const px = hoop.x, py = hoop.y;
+  if (ok) {
+    const clean = kind === 'swish';
+    streak = clean ? streak + 1 : 0;
+    if (streak >= 3 && !fire) { fire = true; popup('В ОГНЕ!', COL.orange, 1.4); G.sfx('boom'); shake.add(14); }
+    if (!clean) fire = false;
+    let pts = clean ? 3 : 2; if (fire) pts *= 2;
+    score += pts; made++;
+    netSway = 1;
+    popup((clean ? 'ЧИСТО! ' : '') + '+' + pts, clean ? COL.lime : COL.yellow, 0.9);
+    G.sfx(clean ? 'swish' : 'rim'); if (clean) G.sfx('coin'); G.buzz(clean ? [20, 30, 40] : 25); shake.add(clean ? 8 : 4);
+    fx.emit(px, py + hoop.rh, { n: clean ? 40 : 20, color: fire ? [COL.orange, COL.yellow, COL.red] : [COL.yellow, '#fff', COL.lime], speed: 420, life: 0.8, size: 5, gravity: 600, shape: 'rect' });
+    ball.phase = 'drop'; ball.vx = 0; ball.vy = H * 0.6;
+  } else {
+    streak = 0; if (fire) { fire = false; popup('Огонь погас', COL.red, 0.8); }
+    if (kind === 'rimOut' || kind === 'boardOut') { G.sfx('rim'); shake.add(5); ball.vx = (Math.random() < 0.5 ? -1 : 1) * W * 0.6; ball.vy = -H * 0.4; }
+    else { G.sfx('bounce'); ball.vx = (ball.aimX - ballHome.x) * 0.6; ball.vy = kind === 'long' ? -H * 0.15 : H * 0.2; }
+    if (kind === 'short') popup('Не добросил', COL.text, 0.6);
+    if (kind === 'long') popup('Перебросил', COL.text, 0.6);
+    ball.phase = 'fall';
+  }
+  $('score').textContent = score;
+}
+function popup(text, color, life) { popups.push({ text, color, life, max: life, y: hoop.y + hoop.rw * 1.15 }); }
+
+/* ---------- rounds ---------- */
+function startRound() {
+  time = ROUND; score = 0; streak = 0; fire = false; made = 0; ball = null; popups = []; hoopT = 0;
+  hoop.x = hoop.baseX = W / 2;
+  $('score').textContent = 0; $('time').textContent = ROUND; $('best').textContent = G.get('best.basket', 0);
+  $('whoLbl').textContent = nPlayers > 1 ? `ИГРОК ${current + 1}` : 'ОЧКИ';
+  $('whoLbl').style.color = nPlayers > 1 ? PCOL[current] : '';
+  ['menu', 'turn', 'over'].forEach(id => { $(id).hidden = true; });
+  $('hud').hidden = false; state = 'play'; G.wake(true); G.sfx('whistle');
+}
+function endRound() {
+  state = 'over'; ball = null; G.wake(false); G.sfx('whistle');
+  scores[current] = score;
+  if (nPlayers > 1 && current < nPlayers - 1) {
+    current++;
+    setTimeout(() => { $('turnTitle').textContent = `Игрок ${current + 1}`; $('turnTitle').style.color = PCOL[current]; $('turn').hidden = false; }, 700);
+    return;
+  }
+  setTimeout(showOver, 700);
+}
+function showOver() {
+  const tbl = $('overTable');
+  if (nPlayers > 1) {
+    const max = Math.max(...scores);
+    const winners = scores.map((s, i) => s === max ? i + 1 : 0).filter(Boolean);
+    $('overTitle').textContent = winners.length > 1 ? 'Ничья!' : `Победил игрок ${winners[0]}`;
+    $('overScore').textContent = max;
+    tbl.innerHTML = scores.map((s, i) => `<div class="${s === max ? 'win' : ''}"><span>Игрок ${i + 1}</span><span>${s}</span></div>`).join('');
+    tbl.hidden = false; $('overNote').textContent = '';
+    const r = G.best('basket', max);
+    if (r.isNew) $('overNote').textContent = 'Новый рекорд!';
+  } else {
+    tbl.hidden = true;
+    $('overTitle').textContent = 'Время!';
+    $('overScore').textContent = score;
+    const r = G.best('basket', score);
+    $('overNote').textContent = r.isNew ? 'Новый рекорд!' : `Попаданий: ${made}. Рекорд: ${r.best}`;
+    if (r.isNew) { G.sfx('win'); fx.emit(W / 2, H * 0.3, { n: 80, color: [COL.yellow, COL.pink, COL.cyan, COL.lime], speed: 700, life: 1.4, size: 7, gravity: 500, shape: 'rect' }); }
+  }
+  $('over').hidden = false;
+}
+
+/* ---------- loop ---------- */
+G.loop(dt => {
+  if (state === 'play') {
+    time -= dt;
+    $('time').textContent = Math.max(0, Math.ceil(time));
+    if (time <= 0 && !ball) endRound();
+    // the hoop starts moving after a few baskets, faster as you go
+    if (made >= 5) { hoopT += dt * (made >= 14 ? 1.8 : 1); hoop.x = hoop.baseX + Math.sin(hoopT) * W * (made >= 14 ? 0.28 : 0.2); }
+  }
+  if (ball) {
+    if (ball.phase === 'fly') {
+      ball.t += dt / ball.dur;
+      const t = Math.min(1, ball.t), e = t;
+      const endY = hoop.y - hoop.rh * 0.3 + (ball.depthErr < -0.15 ? hoop.rw * 0.9 * -ball.depthErr : 0);
+      const targetX = ball.aimX + (hoop.x - hoop.baseX) * 0;    // the ball flies where you aimed
+      ball.x = ball.x0 + (targetX - ball.x0) * e;
+      ball.y = ball.y0 + (endY - ball.y0) * e - Math.sin(Math.PI * e) * H * 0.28 * Math.min(1.3, ball.power);
+      ball.s = 1 - 0.5 * e;
+      ball.spin += dt * 9;
+      if (fire) fx.emit(ball.x, ball.y, { n: 2, color: [COL.orange, COL.yellow], speed: 60, life: 0.35, size: R * ball.s * 0.4, gravity: -200 });
+      if (ball.t >= 1) landed(judge());
+    } else {
+      ball.vy += H * 2.2 * dt; ball.x += ball.vx * dt; ball.y += ball.vy * dt; ball.spin += dt * 6;
+      if (ball.y > H + R * 2 || ball.x < -R * 3 || ball.x > W + R * 3) ball = null;
+    }
+  }
+  netSway = Math.max(0, netSway - dt * 1.6);
+  popups.forEach(p => { p.life -= dt; p.y -= dt * 40; }); popups = popups.filter(p => p.life > 0);
+  fx.update(dt); shake.update(dt);
+  draw();
+});
+
+/* ---------- render ---------- */
+function draw() {
+  ctx.save(); ctx.translate(shake.x, shake.y);
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, fire ? '#3a1222' : '#1b1240'); bg.addColorStop(0.55, fire ? '#5a1b1b' : '#2a1a5e'); bg.addColorStop(0.56, '#c9853f'); bg.addColorStop(1, '#a8682e');
+  ctx.fillStyle = bg; ctx.fillRect(-20, -20, W + 40, H + 40);
+  // court boards
+  ctx.strokeStyle = 'rgba(0,0,0,.08)'; ctx.lineWidth = 2;
+  for (let i = 0; i < 12; i++) { const y = H * 0.56 + (H * 0.44) * Math.pow(i / 12, 1.5); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.ellipse(W / 2, H * 0.98, W * 0.42, H * 0.16, 0, Math.PI, 0); ctx.stroke();
+  // backboard
+  const bw = hoop.rw * 2.3, bh = hoop.rw * 1.45, bx = hoop.x - bw / 2, by = hoop.y - bh * 0.95;
+  ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.fillRect(bx, by, bw, bh);
+  ctx.strokeStyle = COL.red; ctx.lineWidth = 4; ctx.strokeRect(bx + 3, by + 3, bw - 6, bh - 6);
+  ctx.strokeRect(hoop.x - hoop.rw * 0.55, hoop.y - hoop.rw * 0.75, hoop.rw * 1.1, hoop.rw * 0.72);
+  ctx.fillStyle = '#555'; ctx.fillRect(hoop.x - 4, by + bh, 8, H);   // pole
+  const inFront = ball && ball.phase === 'fly' && ball.t > 0.55;
+  const dropping = ball && ball.phase === 'drop';
+  // back rim
+  ctx.strokeStyle = COL.orange; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.ellipse(hoop.x, hoop.y, hoop.rw / 2, hoop.rh / 2, 0, Math.PI, 0); ctx.stroke();
+  if (inFront || dropping) drawBall();
+  // net
+  ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 2;
+  const sway = Math.sin(performance.now() / 45) * netSway * hoop.rw * 0.08, nh = hoop.rw * 0.62 * (1 + netSway * 0.25);
+  for (let i = 0; i <= 8; i++) {
+    const a = Math.PI + Math.PI * i / 8, x0 = hoop.x + Math.cos(a) * hoop.rw / 2, y0 = hoop.y + Math.sin(a) * -hoop.rh / 2;
+    const x1 = hoop.x + (x0 - hoop.x) * 0.55 + sway;
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, hoop.y + nh); ctx.stroke();
+  }
+  for (let j = 1; j <= 3; j++) {
+    const k = j / 3.4, y = hoop.y + nh * k, w = hoop.rw / 2 * (1 - 0.45 * k);
+    ctx.beginPath(); ctx.ellipse(hoop.x + sway * k, y, w, hoop.rh / 2 * (1 - 0.3 * k), 0, 0, Math.PI); ctx.stroke();
+  }
+  // front rim
+  ctx.strokeStyle = COL.orange; ctx.lineWidth = 7;
+  ctx.beginPath(); ctx.ellipse(hoop.x, hoop.y, hoop.rw / 2, hoop.rh / 2, 0, 0, Math.PI); ctx.stroke();
+  if (!(inFront || dropping)) drawBall();
+  // aim line while swiping
+  if (swipe) {
+    ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.setLineDash([2, 12]);
+    ctx.beginPath(); ctx.moveTo(swipe.x0, swipe.y0); ctx.lineTo(swipe.x, swipe.y); ctx.stroke(); ctx.setLineDash([]);
+  }
+  fx.draw(ctx);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  popups.forEach(p => {
+    const k = 1 - p.life / p.max, s = k < 0.15 ? 0.6 + k / 0.15 * 0.5 : 1.1 - Math.min(0.1, (k - 0.15));
+    ctx.save(); ctx.translate(W / 2, p.y); ctx.scale(s, s); ctx.globalAlpha = Math.min(1, p.life * 3);
+    ctx.font = `900 ${Math.round(W * 0.1)}px Rubik, system-ui`; ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.strokeText(p.text, 0, 0);
+    ctx.fillStyle = p.color; ctx.fillText(p.text, 0, 0); ctx.restore();
+  });
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+function drawBall() {
+  const b = ball || { x: ballHome.x, y: ballHome.y, s: 1, spin: 0 };
+  if (state !== 'play' && !ball) { if (state === 'menu' || state === 'over') {} }
+  const r = R * b.s;
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(b.x, (ball ? Math.max(b.y + r, H * 0.6) : b.y + r * 1.05), r * 0.9, r * 0.22, 0, 0, 7); ctx.fill();
+  if (fire) { const g = ctx.createRadialGradient(b.x, b.y, r * 0.5, b.x, b.y, r * 2); g.addColorStop(0, 'rgba(255,140,40,.6)'); g.addColorStop(1, 'rgba(255,80,0,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(b.x, b.y, r * 2, 0, 7); ctx.fill(); }
+  ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.spin);
+  ctx.fillStyle = COL.orange; ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#2a140a'; ctx.lineWidth = Math.max(1.5, r * 0.07);
+  ctx.beginPath(); ctx.moveTo(-r, 0); ctx.lineTo(r, 0); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(0, r); ctx.stroke();
+  ctx.beginPath(); ctx.arc(-r * 1.25, 0, r * 0.95, -0.75, 0.75); ctx.stroke();
+  ctx.beginPath(); ctx.arc(r * 1.25, 0, r * 0.95, Math.PI - 0.75, Math.PI + 0.75); ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = 'rgba(255,255,255,.3)'; ctx.beginPath(); ctx.arc(b.x - r * 0.35, b.y - r * 0.4, r * 0.25, 0, 7); ctx.fill();
+}
+
+/* ---------- menus ---------- */
+function syncMenu() { document.querySelectorAll('[data-n]').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.n === nPlayers))); $('nHint').hidden = nPlayers === 1; }
+document.querySelectorAll('[data-n]').forEach(b => b.addEventListener('click', () => { nPlayers = +b.dataset.n; G.set('basket.n', nPlayers); G.sfx('tap'); syncMenu(); }));
+function startGame() {
+  current = 0; scores = [];
+  if (nPlayers > 1) { ['menu', 'over'].forEach(id => { $(id).hidden = true; }); $('turnTitle').textContent = 'Игрок 1'; $('turnTitle').style.color = PCOL[0]; $('turn').hidden = false; }
+  else startRound();
+}
+$('start').addEventListener('click', startGame);
+$('again').addEventListener('click', startGame);
+$('turnGo').addEventListener('click', startRound);
+$('overMenu').addEventListener('click', () => { $('over').hidden = true; $('hud').hidden = true; $('menu').hidden = false; state = 'menu'; });
+G.topbar();
+layout(); syncMenu();
+})();
+</script>
+</body>
+</html>

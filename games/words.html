@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#140f24">
+<title>Слово дня — Игротека</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="common.css">
+<style>
+  html, body { overflow: hidden; }
+  main {
+    height: 100dvh; display: grid; grid-template-rows: auto 1fr auto;
+    padding: calc(68px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom));
+    max-width: 520px; margin: 0 auto;
+  }
+  .title { text-align: center; font-weight: 900; font-size: 22px; letter-spacing: 0.01em; }
+  .title small { display: block; font-size: 13px; font-weight: 700; color: var(--muted); }
+  .grid-wrap { display: grid; place-items: center; min-height: 0; }
+  .grid { display: grid; grid-template-rows: repeat(6, 1fr); gap: 6px; height: min(100%, 420px); aspect-ratio: 5 / 6; padding: 8px 0; }
+  .row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .row.shake { animation: shake 400ms; }
+  @keyframes shake { 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
+  .tile {
+    display: grid; place-items: center; border-radius: 10px;
+    border: 3px solid var(--ink-3); background: transparent;
+    font-weight: 900; font-size: clamp(22px, 7vw, 34px); text-transform: uppercase;
+    transition: transform 80ms;
+  }
+  .tile.filled { border-color: var(--muted); animation: pop 110ms var(--ease); }
+  @keyframes pop { 50% { transform: scale(1.12); } }
+  .tile.flip { animation: flip 420ms ease-in-out both; }
+  @keyframes flip { 0% { transform: rotateX(0); } 50% { transform: rotateX(90deg); } 100% { transform: rotateX(0); } }
+  .tile.c, .key.c { background: var(--lime); border-color: var(--lime); color: var(--on-color); }
+  .tile.p, .key.p { background: var(--yellow); border-color: var(--yellow); color: var(--on-color); }
+  .tile.a, .key.a { background: var(--ink-3); border-color: var(--ink-3); color: var(--muted); }
+  .row.win .tile { animation: jump 500ms var(--ease) both; }
+  @keyframes jump { 40% { transform: translateY(-18px); } }
+  .kb { display: grid; gap: 7px; padding-top: 6px; }
+  .kb .r { display: flex; gap: 4px; justify-content: center; }
+  .key {
+    flex: 1; min-width: 0; height: 54px; border: 0; border-radius: 8px;
+    background: var(--ink-3); color: var(--text); font-weight: 800; font-size: 17px; text-transform: uppercase; padding: 0;
+    box-shadow: 0 3px 0 oklch(0.12 0.04 290);
+  }
+  .key:active { transform: translateY(2px); box-shadow: 0 1px 0 oklch(0.12 0.04 290); }
+  .key.wide { flex: 1.6; font-size: 13px; }
+  .key.a { opacity: 0.55; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .stats div { display: grid; }
+  .stats b { font-size: 30px; font-weight: 900; font-variant-numeric: tabular-nums; }
+  .stats small { color: var(--muted); font-size: 12px; font-weight: 700; }
+  .dist { display: grid; gap: 4px; text-align: left; }
+  .dist div { display: flex; align-items: center; gap: 8px; font-weight: 800; }
+  .dist i { display: block; height: 22px; min-width: 22px; padding: 0 8px; border-radius: 6px; background: var(--ink-3); font-style: normal; text-align: right; line-height: 22px; font-size: 14px; }
+  .dist i.now { background: var(--lime); color: var(--on-color); }
+  .secret { font-size: 40px; font-weight: 900; letter-spacing: 0.15em; text-transform: uppercase; color: var(--yellow); }
+</style>
+</head>
+<body>
+<main>
+  <div class="title"><span id="modeTitle">Слово дня</span><small id="modeSub"></small></div>
+  <div class="grid-wrap"><div class="grid" id="grid" aria-live="polite"></div></div>
+  <div class="kb" id="kb"></div>
+</main>
+
+<div class="overlay" id="menu">
+  <div class="panel">
+    <h1>Слово дня</h1>
+    <p>Угадай слово из 5 букв за 6 попыток. Зелёная буква стоит на месте, жёлтая есть в слове, но в другом месте.</p>
+    <div class="choices">
+      <button class="btn lime" type="button" data-go="daily">Слово дня</button>
+      <button class="btn" type="button" data-go="endless">Бесконечный режим</button>
+      <button class="btn pink" type="button" data-go="duel">Дуэль: загадай другу</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="duelSet" hidden>
+  <div class="panel">
+    <h1>Загадай слово</h1>
+    <p>Набери слово из 5 букв на клавиатуре внизу так, чтобы друг не видел, и нажми «Ввод».</p>
+  </div>
+</div>
+
+<div class="overlay" id="handoff" hidden>
+  <div class="panel">
+    <h1>Слово загадано</h1>
+    <p>Передай телефон другу: у него 6 попыток.</p>
+    <button class="btn pink" type="button" id="handGo">Я отгадываю</button>
+  </div>
+</div>
+
+<div class="overlay" id="over" hidden>
+  <div class="panel">
+    <h1 id="overTitle"></h1>
+    <p>Слово:</p>
+    <div class="secret" id="overWord"></div>
+    <div class="stats" id="stats" hidden></div>
+    <div class="dist" id="dist" hidden></div>
+    <p id="overNote"></p>
+    <div class="choices">
+      <button class="btn" type="button" id="share" hidden>Поделиться результатом</button>
+      <button class="btn lime" type="button" id="next">Ещё слово</button>
+      <button class="btn ghost" type="button" id="overMenu">Меню</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+(async () => {
+'use strict';
+const $ = id => document.getElementById(id);
+const ROWS = [['й','ц','у','к','е','н','г','ш','щ','з','х','ъ'], ['ф','ы','в','а','п','р','о','л','д','ж','э'], ['ENTER','я','ч','с','м','и','т','ь','б','ю','BACK']];
+let ANSWERS = [], ALLOWED = new Set();
+try {
+  const d = await (await fetch('words5.json')).json();
+  ANSWERS = d.answers; ALLOWED = new Set(d.allowed);
+} catch { ANSWERS = ['слово', 'игра', 'книга']; }
+
+let mode = 'daily', answer = '', row = 0, cur = '', done = true, grid = [], keyState = {}, busy = false, guesses = [];
+
+/* ---------- board ---------- */
+function buildGrid() {
+  const g = $('grid'); g.innerHTML = ''; grid = [];
+  for (let r = 0; r < 6; r++) {
+    const rowEl = document.createElement('div'); rowEl.className = 'row';
+    const tiles = [];
+    for (let c = 0; c < 5; c++) { const t = document.createElement('div'); t.className = 'tile'; rowEl.appendChild(t); tiles.push(t); }
+    g.appendChild(rowEl); grid.push({ el: rowEl, tiles });
+  }
+}
+function buildKb() {
+  const kb = $('kb'); kb.innerHTML = '';
+  ROWS.forEach(r => {
+    const rowEl = document.createElement('div'); rowEl.className = 'r';
+    r.forEach(k => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'key' + (k.length > 1 ? ' wide' : ''); b.dataset.k = k;
+      b.textContent = k === 'ENTER' ? 'Ввод' : k === 'BACK' ? '⌫' : k;
+      if (k === 'BACK') b.setAttribute('aria-label', 'Стереть');
+      rowEl.appendChild(b);
+    });
+    kb.appendChild(rowEl);
+  });
+}
+$('kb').addEventListener('pointerdown', e => { const b = e.target.closest('[data-k]'); if (!b) return; e.preventDefault(); press(b.dataset.k); });
+addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === 'Enter') press('ENTER'); else if (e.key === 'Backspace') press('BACK');
+  else if (/^[а-яё]$/i.test(e.key)) press(e.key.toLowerCase().replace('ё', 'е'));
+});
+
+/* ---------- typing ---------- */
+const settingSecret = () => mode === 'duel' && !answer;
+function press(k) {
+  if (busy) return;
+  if (done && !settingSecret()) return;
+  const r = grid[row];
+  if (k === 'BACK') { if (cur) { cur = cur.slice(0, -1); paintRow(); G.sfx('key'); } return; }
+  if (k === 'ENTER') return submit();
+  if (cur.length >= 5) return;
+  cur += k; G.sfx('key'); G.buzz(5);
+  paintRow();
+}
+function paintRow() {
+  const r = grid[row], secret = settingSecret();
+  r.tiles.forEach((t, i) => {
+    const ch = cur[i] || '';
+    const was = t.textContent;
+    t.textContent = secret && ch ? '•' : ch;
+    t.classList.toggle('filled', !!ch);
+    if (ch && !was) { t.classList.remove('filled'); void t.offsetWidth; t.classList.add('filled'); }
+  });
+}
+function invalid(msg) { G.toast(msg); G.sfx('error'); G.buzz([20, 40, 20]); const el = grid[row].el; el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake'); }
+
+function submit() {
+  if (cur.length < 5) return invalid('Нужно 5 букв');
+  if (!ALLOWED.has(cur)) return invalid('Нет такого слова в словаре');
+  if (settingSecret()) {
+    answer = cur; cur = ''; paintRow();
+    $('duelSet').hidden = true; $('handoff').hidden = false;
+    return;
+  }
+  reveal(cur);
+}
+
+function score(guess, ans) {
+  const res = Array(5).fill('a'), left = {};
+  for (let i = 0; i < 5; i++) { if (guess[i] === ans[i]) res[i] = 'c'; else left[ans[i]] = (left[ans[i]] || 0) + 1; }
+  for (let i = 0; i < 5; i++) if (res[i] !== 'c' && left[guess[i]]) { res[i] = 'p'; left[guess[i]]--; }
+  return res;
+}
+function reveal(guess) {
+  busy = true;
+  const res = score(guess, answer), r = grid[row];
+  guesses.push(res);
+  res.forEach((s, i) => {
+    setTimeout(() => {
+      const t = r.tiles[i]; t.classList.add('flip');
+      setTimeout(() => { t.classList.add(s); }, 210);
+      G.sfx('flip', i + (s === 'c' ? 3 : s === 'p' ? 1 : 0));
+    }, i * 230);
+  });
+  setTimeout(() => {
+    res.forEach((s, i) => { const k = guess[i], prev = keyState[k]; if (prev !== 'c' && !(prev === 'p' && s === 'a')) keyState[k] = s; });
+    document.querySelectorAll('.key').forEach(b => { b.classList.remove('c', 'p', 'a'); if (keyState[b.dataset.k]) b.classList.add(keyState[b.dataset.k]); });
+    const won = res.every(s => s === 'c');
+    row++; cur = ''; busy = false;
+    if (mode === 'daily') saveDaily(guess);
+    if (won) return finish(true);
+    if (row >= 6) return finish(false);
+  }, 5 * 230 + 260);
+}
+
+/* ---------- daily ---------- */
+const dayIndex = () => { const d = new Date(); return Math.floor((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(2026, 0, 1)) / 864e5); };
+const dailyKey = () => 'words.day.' + dayIndex();
+function saveDaily(g) { const s = G.get(dailyKey(), { g: [] }); s.g.push(g); G.set(dailyKey(), s); }
+
+function finish(won) {
+  done = true;
+  const tries = row;
+  if (won) { setTimeout(() => { grid[row - 1].el.classList.add('win'); G.sfx('win'); G.buzz([30, 40, 30, 40, 60]); }, 50); }
+  else { G.sfx('lose'); G.buzz(80); }
+  if (mode === 'daily') {
+    const st = G.get('words.stats', { played: 0, wins: 0, streak: 0, max: 0, dist: [0, 0, 0, 0, 0, 0], last: -1 });
+    const s = G.get(dailyKey(), { g: [] });
+    if (!s.done) {
+      st.played++;
+      if (won) { st.wins++; st.dist[tries - 1]++; st.streak = st.last === dayIndex() - 1 ? st.streak + 1 : 1; st.max = Math.max(st.max, st.streak); }
+      else st.streak = 0;
+      st.last = dayIndex(); s.done = true; s.won = won; G.set(dailyKey(), s); G.set('words.stats', st);
+    }
+  }
+  if (mode === 'endless') { const n = G.get('words.endless', 0) + (won ? 1 : 0); G.set('words.endless', n); }
+  setTimeout(() => showOver(won, tries), won ? 1100 : 600);
+}
+function showOver(won, tries) {
+  $('overTitle').textContent = won ? ['Гениально!', 'Блестяще!', 'Отлично!', 'Хорошо!', 'Неплохо!', 'Уф, успел!'][tries - 1] : 'Не угадано';
+  $('overTitle').style.color = won ? 'var(--lime)' : 'var(--pink)';
+  $('overWord').textContent = answer;
+  $('stats').hidden = $('dist').hidden = mode !== 'daily';
+  $('share').hidden = mode !== 'daily';
+  $('next').hidden = mode === 'daily';
+  $('next').textContent = mode === 'duel' ? 'Загадать новое' : 'Ещё слово';
+  $('overNote').textContent = mode === 'daily' ? 'Новое слово завтра в полночь.' : mode === 'endless' ? `Угадано в бесконечном режиме: ${G.get('words.endless', 0)}` : '';
+  if (mode === 'daily') {
+    const st = G.get('words.stats');
+    $('stats').innerHTML = [[st.played, 'сыграно'], [st.played ? Math.round(st.wins / st.played * 100) + '%' : '0%', 'побед'], [st.streak, 'серия'], [st.max, 'лучшая']].map(([b, s]) => `<div><b>${b}</b><small>${s}</small></div>`).join('');
+    const max = Math.max(1, ...st.dist);
+    $('dist').innerHTML = st.dist.map((n, i) => `<div>${i + 1}<i class="${won && i === tries - 1 ? 'now' : ''}" style="width:${Math.max(8, n / max * 100)}%">${n}</i></div>`).join('');
+  }
+  $('over').hidden = false;
+}
+$('share').addEventListener('click', async () => {
+  const lines = guesses.map(r => r.map(s => s === 'c' ? '🟩' : s === 'p' ? '🟨' : '⬛').join('')).join('\n');
+  const won = guesses.length && guesses[guesses.length - 1].every(s => s === 'c');
+  const text = `Слово дня №${dayIndex() + 1} — ${won ? guesses.length : 'X'}/6\n${lines}`;
+  try { if (navigator.share) await navigator.share({ text }); else { await navigator.clipboard.writeText(text); G.toast('Скопировано'); } }
+  catch { try { await navigator.clipboard.writeText(text); G.toast('Скопировано'); } catch {} }
+});
+
+/* ---------- modes ---------- */
+function reset() { buildGrid(); row = 0; cur = ''; keyState = {}; guesses = []; busy = false; document.querySelectorAll('.key').forEach(b => b.classList.remove('c', 'p', 'a')); }
+function begin(m) {
+  mode = m; reset(); ['menu', 'over', 'handoff', 'duelSet'].forEach(id => { $(id).hidden = true; });
+  if (m === 'daily') {
+    answer = ANSWERS[((dayIndex() % ANSWERS.length) + ANSWERS.length) % ANSWERS.length];
+    $('modeTitle').textContent = 'Слово дня'; $('modeSub').textContent = '№' + (dayIndex() + 1);
+    const s = G.get(dailyKey(), { g: [] });
+    done = false;
+    // Replay today's guesses instantly so the board survives a reload.
+    s.g.forEach(g => { const res = score(g, answer); guesses.push(res); grid[row].tiles.forEach((t, i) => { t.textContent = g[i]; t.classList.add(res[i]); keyState[g[i]] = keyState[g[i]] === 'c' ? 'c' : (res[i] === 'a' && keyState[g[i]] === 'p') ? 'p' : res[i]; }); row++; });
+    document.querySelectorAll('.key').forEach(b => { if (keyState[b.dataset.k]) b.classList.add(keyState[b.dataset.k]); });
+    if (s.done) { done = true; showOver(s.won, row); }
+  } else if (m === 'endless') {
+    answer = ANSWERS[Math.floor(Math.random() * ANSWERS.length)]; done = false;
+    $('modeTitle').textContent = 'Бесконечный'; $('modeSub').textContent = `угадано: ${G.get('words.endless', 0)}`;
+  } else {
+    answer = ''; done = true;
+    $('modeTitle').textContent = 'Дуэль'; $('modeSub').textContent = 'загадай слово';
+    $('duelSet').hidden = false;
+    setTimeout(() => { $('duelSet').hidden = true; G.toast('Набери слово — его не видно'); }, 1600);
+  }
+}
+$('handGo').addEventListener('click', () => { $('handoff').hidden = true; reset(); done = false; $('modeSub').textContent = 'отгадай слово друга'; });
+document.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => { G.sfx('tap'); begin(b.dataset.go); }));
+$('next').addEventListener('click', () => begin(mode));
+$('overMenu').addEventListener('click', () => { $('over').hidden = true; $('menu').hidden = false; });
+G.topbar();
+buildGrid(); buildKb();
+})();
+</script>
+</body>
+</html>

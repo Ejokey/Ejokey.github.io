@@ -1,0 +1,99 @@
+/* Игротека — shared tokens and chrome. Juicy arcade: deep ink-violet ground, four loud game colours. */
+@font-face { font-family: 'Rubik'; font-weight: 300 900; font-display: swap; src: url(fonts/rubik-cyr.woff2) format('woff2'); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'Rubik'; font-weight: 300 900; font-display: swap; src: url(fonts/rubik-lat.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+:root {
+  color-scheme: dark;
+  --ink: oklch(0.16 0.045 290);          /* page ground */
+  --ink-2: oklch(0.22 0.06 290);         /* raised panels */
+  --ink-3: oklch(0.30 0.07 290);
+  --line: oklch(0.38 0.07 290);
+  --text: oklch(0.97 0.01 290);
+  --muted: oklch(0.76 0.04 290);
+  --pink: oklch(0.70 0.24 355);
+  --yellow: oklch(0.90 0.18 95);
+  --cyan: oklch(0.82 0.14 210);
+  --lime: oklch(0.86 0.21 135);
+  --orange: oklch(0.75 0.19 50);
+  --red: oklch(0.64 0.24 25);
+  --on-color: oklch(0.18 0.05 290);
+  --font: 'Rubik', system-ui, sans-serif;
+  --r: 18px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --z-hud: 10; --z-overlay: 30; --z-toast: 40;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--ink); color: var(--text);
+  font: 500 16px/1.35 var(--font);
+  -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none;
+  overscroll-behavior: none;
+}
+button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulation; }
+:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
+svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+
+/* chunky "pressable" button: a solid shadow that collapses on press */
+.btn {
+  --c: var(--yellow);
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 56px; padding: 0 24px; border: 0; border-radius: 16px;
+  background: var(--c); color: var(--on-color);
+  font-weight: 800; font-size: 19px; letter-spacing: 0.01em;
+  box-shadow: 0 5px 0 color-mix(in oklch, var(--c) 55%, black);
+  transform: translateY(0); transition: transform 90ms var(--ease), box-shadow 90ms var(--ease), filter 120ms;
+}
+.btn:active { transform: translateY(4px); box-shadow: 0 1px 0 color-mix(in oklch, var(--c) 55%, black); }
+.btn.ghost { --c: var(--ink-3); color: var(--text); }
+.btn.pink { --c: var(--pink); color: white; }
+.btn.cyan { --c: var(--cyan); }
+.btn.lime { --c: var(--lime); }
+.btn:disabled { filter: grayscale(1) brightness(0.7); }
+
+.topbar {
+  position: fixed; inset: 0 0 auto 0; z-index: var(--z-hud);
+  display: flex; align-items: center; gap: 8px;
+  padding: max(8px, env(safe-area-inset-top)) 12px 8px;
+  pointer-events: none;
+}
+.topbar > * { pointer-events: auto; }
+.round {
+  display: inline-grid; place-items: center; width: 48px; height: 48px; border-radius: 50%;
+  border: 0; background: color-mix(in oklch, var(--ink-2) 85%, transparent); color: var(--text);
+  box-shadow: 0 3px 0 oklch(0.1 0.04 290);
+}
+.round:active { transform: translateY(2px); box-shadow: 0 1px 0 oklch(0.1 0.04 290); }
+.spacer { flex: 1; }
+
+/* full-screen menus / results over the game */
+.overlay {
+  position: fixed; inset: 0; z-index: var(--z-overlay);
+  display: grid; place-items: center; padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+  background: color-mix(in oklch, var(--ink) 82%, transparent);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  animation: ov-in 220ms var(--ease);
+}
+@keyframes ov-in { from { opacity: 0; } }
+.panel { width: min(100%, 420px); display: grid; gap: 14px; text-align: center; animation: pop-in 320ms var(--ease); }
+@keyframes pop-in { from { transform: scale(0.9); opacity: 0; } }
+.panel h1 { margin: 0; font-size: clamp(34px, 11vw, 52px); font-weight: 900; line-height: 1; letter-spacing: -0.02em; text-wrap: balance; }
+.panel p { margin: 0; color: var(--muted); font-size: 17px; text-wrap: pretty; }
+.panel .big { font-size: 64px; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; }
+.choices { display: grid; gap: 12px; }
+.seg { display: grid; grid-auto-flow: column; gap: 6px; padding: 5px; border-radius: 16px; background: var(--ink-2); }
+.seg button { min-height: 44px; border: 0; border-radius: 12px; background: transparent; color: var(--muted); font-weight: 700; font-size: 16px; }
+.seg button[aria-pressed="true"] { background: var(--ink-3); color: var(--text); }
+
+.toast {
+  position: fixed; left: 50%; top: calc(72px + env(safe-area-inset-top)); z-index: var(--z-toast);
+  transform: translate(-50%, -10px); opacity: 0; pointer-events: none;
+  padding: 10px 18px; border-radius: 999px; background: var(--text); color: var(--on-color);
+  font-weight: 800; transition: opacity 180ms var(--ease), transform 180ms var(--ease);
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+}

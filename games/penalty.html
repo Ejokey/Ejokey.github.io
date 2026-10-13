@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#140f24">
+<title>Пенальти — Игротека</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="common.css">
+<style>
+  html, body { overflow: hidden; touch-action: none; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .board {
+    position: fixed; left: 50%; top: calc(14px + env(safe-area-inset-top)); transform: translateX(-50%); z-index: 5;
+    display: grid; gap: 6px; padding: 10px 14px; border-radius: 16px; background: color-mix(in oklch, var(--ink) 78%, transparent);
+    font-weight: 800; font-size: 15px; pointer-events: none;
+  }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .row .name { width: 72px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .goals { min-width: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+  .dots { display: flex; gap: 5px; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--ink-3); }
+  .dot.g { background: var(--lime); } .dot.m { background: var(--red); }
+  .prompt {
+    position: fixed; left: 0; right: 0; bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 5;
+    text-align: center; font-weight: 800; font-size: 18px; pointer-events: none; text-shadow: 0 2px 0 rgba(0,0,0,.4);
+    padding: 0 16px;
+  }
+  .topbar { top: auto; bottom: 0; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="board" id="board" hidden></div>
+<div class="prompt" id="prompt"></div>
+
+<div class="overlay" id="menu">
+  <div class="panel">
+    <h1>Пенальти</h1>
+    <p>Свайп от мяча к воротам: направление — куда, длина — высота, дуга пальцем — подкрутка. По 5 ударов, потом до первого промаха.</p>
+    <div class="seg" role="group" aria-label="Режим">
+      <button type="button" data-mode="2p" aria-pressed="true">Вдвоём</button>
+      <button type="button" data-mode="bot" aria-pressed="false">Против бота</button>
+    </div>
+    <p id="hint2p">Вратарь тайно выбирает угол, потом отдаёт телефон бьющему.</p>
+    <button class="btn" type="button" id="start">Играть</button>
+  </div>
+</div>
+
+<div class="overlay" id="handoff" hidden>
+  <div class="panel">
+    <h1 id="handTitle">Отдай телефон</h1>
+    <p id="handText"></p>
+    <button class="btn" type="button" id="handGo">Я бьющий, готов</button>
+  </div>
+</div>
+
+<div class="overlay" id="over" hidden>
+  <div class="panel">
+    <h1 id="overTitle"></h1>
+    <div class="big" id="overScore"></div>
+    <p id="overNote"></p>
+    <div class="choices">
+      <button class="btn" type="button" id="again">Ещё серию</button>
+      <button class="btn ghost" type="button" id="overMenu">Сменить режим</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const canvas = $('c');
+let W, H, ctx;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COL = { pink: css('--pink'), cyan: css('--cyan'), yellow: css('--yellow'), lime: css('--lime'), red: css('--red'), ink: css('--ink'), text: css('--text') };
+
+let mode = G.get('penalty.mode', '2p');
+const players = () => mode === 'bot' ? [{ name: 'Ты', color: COL.pink }, { name: 'Бот', color: COL.cyan }] : [{ name: 'Игрок 1', color: COL.pink }, { name: 'Игрок 2', color: COL.cyan }];
+let P, kicks, turn, state = 'menu';
+let goalR, ballStart, ballR;
+const ZONES = [[-0.66, 0.72], [0, 0.78], [0.66, 0.72], [-0.66, 0.24], [0, 0.22], [0.66, 0.24]];
+let keeper = { u: 0, v: 0, zone: -1, dive: 0, color: COL.cyan };
+let ball = null, swipe = null, result = null, net = 0, pickedZone = -1, botDiveTimer = 0;
+const fx = new G.Particles(), shake = new G.Shake();
+
+function layout() {
+  ({ w: W, h: H, ctx } = G.fit(canvas));
+  const gw = Math.min(W * 0.84, H * 0.62);
+  goalR = { x: (W - gw) / 2, y: H * 0.40, w: gw, h: gw * 0.36 };
+  ballStart = { x: W / 2, y: H * 0.80 };
+  ballR = Math.min(W, H) * 0.07;
+}
+addEventListener('resize', layout);
+const toScreen = (u, v) => ({ x: goalR.x + (u + 1) / 2 * goalR.w, y: goalR.y - v * goalR.h });
+
+/* ---------- match flow ---------- */
+function start() {
+  P = players(); kicks = [[], []]; turn = 0;
+  ['menu', 'over', 'handoff'].forEach(id => { $(id).hidden = true; });
+  $('board').hidden = false; G.wake(true); G.sfx('whistle');
+  nextKick();
+}
+const shooter = () => turn % 2, keeperOf = () => 1 - (turn % 2);
+function nextKick() {
+  result = null; ball = null; swipe = null; net = 0; pickedZone = -1;
+  keeper = { u: 0, v: 0, zone: -1, dive: 0, color: P[keeperOf()].color };
+  renderBoard();
+  if (mode === '2p') { state = 'pick'; prompt(`${P[keeperOf()].name}, ты вратарь: выбери угол. ${P[shooter()].name}, отвернись!`); }
+  else if (shooter() === 0) { keeper.zone = botKeeperZone(); state = 'aim'; prompt('Свайпни от мяча в сторону ворот'); }
+  else { state = 'dive'; botDiveTimer = 1.6; prompt('Ты вратарь: жми на угол, куда прыгнуть!'); }
+}
+function prompt(t) { $('prompt').textContent = t; }
+function renderBoard() {
+  const html = P.map((p, i) => {
+    const k = kicks[i], n = Math.max(5, k.length + (k.length >= 5 ? 0 : 0));
+    const dots = Array.from({ length: Math.max(5, k.length) }, (_, j) => `<span class="dot ${k[j] === true ? 'g' : k[j] === false ? 'm' : ''}"></span>`).join('');
+    return `<div class="row"><span class="name" style="color:${p.color}">${p.name}</span><span class="dots">${dots}</span><span class="goals">${k.filter(Boolean).length}</span></div>`;
+  }).join('');
+  $('board').innerHTML = html;
+}
+// Decided early when the trailing side can no longer catch up within five kicks each; then sudden death in pairs.
+function decided() {
+  const [a, b] = kicks, ga = a.filter(Boolean).length, gb = b.filter(Boolean).length;
+  if (a.length <= 5 && b.length <= 5) {
+    const leftA = 5 - a.length, leftB = 5 - b.length;
+    if (ga + leftA < gb || gb + leftB < ga) return true;
+    if (a.length === 5 && b.length === 5) return ga !== gb;
+    return false;
+  }
+  return a.length === b.length && ga !== gb;
+}
+
+/* ---------- bot ---------- */
+function botKeeperZone() { return Math.random() < 0.25 ? (Math.random() < 0.5 ? 1 : 4) : [0, 2, 3, 5][Math.floor(Math.random() * 4)]; }
+function botShot() {
+  const miss = Math.random() < 0.1;
+  const u = (Math.random() * 2 - 1) * (miss ? 1.2 : 0.92), v = miss ? 1.1 + Math.random() * 0.2 : 0.06 + Math.random() * 0.86;
+  return { u, v, curve: (Math.random() - 0.5) * 0.5, power: 0.9 + Math.random() * 0.4 };
+}
+
+/* ---------- input ---------- */
+function zoneAt(x, y) {
+  let best = -1, bd = Infinity;
+  ZONES.forEach(([u, v], i) => { const p = toScreen(u, v); const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = i; } });
+  return bd < goalR.w * 0.35 ? best : -1;
+}
+canvas.addEventListener('pointerdown', e => {
+  if (state === 'pick' || state === 'dive') {
+    const z = zoneAt(e.clientX, e.clientY); if (z < 0) return;
+    pickedZone = z; G.sfx('tap'); G.buzz(10);
+    if (state === 'pick') {
+      keeper.zone = z; state = 'handoff';
+      setTimeout(() => {
+        $('handTitle').textContent = 'Угол выбран';
+        $('handText').textContent = `Отдай телефон: бьёт ${P[shooter()].name}.`;
+        $('handoff').hidden = false;
+      }, 250);
+    } else {
+      keeper.zone = z; state = 'flight-wait'; botDiveTimer = 0.25;
+    }
+    return;
+  }
+  if (state !== 'aim') return;
+  if (Math.hypot(e.clientX - ballStart.x, e.clientY - ballStart.y) > ballR * 3) return;
+  swipe = { pts: [{ x: e.clientX, y: e.clientY, t: performance.now() }], id: e.pointerId };
+  try { canvas.setPointerCapture(e.pointerId); } catch {}
+});
+canvas.addEventListener('pointermove', e => { if (swipe && e.pointerId === swipe.id) swipe.pts.push({ x: e.clientX, y: e.clientY, t: performance.now() }); });
+canvas.addEventListener('pointerup', e => {
+  if (!swipe || e.pointerId !== swipe.id) return;
+  const pts = swipe.pts; swipe = null;
+  const a = pts[0], b = pts[pts.length - 1];
+  const dx = b.x - a.x, dy = a.y - b.y, dist = Math.hypot(dx, dy);
+  if (dy < H * 0.06) { prompt('Свайпни вверх, к воротам'); return; }
+  const dur = Math.max(60, b.t - a.t);
+  const power = Math.max(0.45, Math.min(1.4, (dist / dur) / 1.1));
+  // Lateral bulge of the finger path relative to the chord = curl on the ball.
+  let bulge = 0;
+  for (const p of pts) { const s = ((p.x - a.x) * dy - (p.y - a.y) * -dx) / (dist || 1); if (Math.abs(s) > Math.abs(bulge)) bulge = s; }
+  const curve = Math.max(-0.6, Math.min(0.6, -bulge / dist * 1.6));
+  const u = dx / dy * 1.35 + curve * 0.5;
+  const v = Math.max(0, (dy / (H * 0.5)) * 1.05 - 0.08);
+  kick({ u, v, curve, power });
+});
+$('handGo').addEventListener('click', () => { $('handoff').hidden = true; state = 'aim'; prompt(`${P[shooter()].name}, свайпни от мяча к воротам`); });
+
+/* ---------- the kick ---------- */
+function kick(shot) {
+  state = 'flight';
+  ball = { ...shot, t: 0, dur: 0.62 / shot.power };
+  G.sfx('kick'); G.buzz(18); shake.add(3);
+  prompt('');
+  keeper.dive = 0;
+}
+function resolve() {
+  const { u, v, power } = ball;
+  const post = (Math.abs(Math.abs(u) - 1) < 0.06 && v < 1.04) || (Math.abs(v - 1) < 0.05 && Math.abs(u) < 1.04);
+  const wide = Math.abs(u) > 1 || v > 1;
+  const kz = ZONES[keeper.zone] || [0, 0.3];
+  const reach = 0.36 + Math.max(0, 1.2 - power) * 0.18;
+  const saved = !wide && Math.hypot(u - kz[0], (v - kz[1]) * 0.9) < reach;
+  let ok = !wide && !saved && !post;
+  const pt = toScreen(Math.max(-1.1, Math.min(1.1, u)), Math.min(1.15, v));
+  if (post) { result = { text: 'ШТАНГА!', color: COL.yellow }; G.sfx('rim'); shake.add(8); G.buzz([20, 30, 20]); }
+  else if (wide) { result = { text: 'МИМО', color: COL.red }; G.sfx('miss'); }
+  else if (saved) { result = { text: 'СЕЙВ!', color: keeper.color }; G.sfx('save'); shake.add(10); G.buzz(40); fx.emit(pt.x, pt.y, { n: 24, color: [keeper.color, '#fff'], speed: 400, life: 0.5, gravity: 600 }); }
+  else {
+    result = { text: 'ГОЛ!', color: P[shooter()].color }; net = 1; G.sfx('goal'); shake.add(18); G.buzz([30, 40, 80]);
+    fx.emit(pt.x, pt.y, { n: 60, color: [P[shooter()].color, COL.yellow, '#fff'], speed: 650, life: 1, size: 6, gravity: 500, shape: 'rect' });
+  }
+  kicks[shooter()].push(ok);
+  renderBoard();
+  state = 'result';
+  setTimeout(() => {
+    if (decided()) return finish();
+    turn++;
+    if (mode === '2p' && turn % 2 === 0) G.toast('Меняйтесь: бьёт ' + P[shooter()].name);
+    nextKick();
+  }, 1500);
+}
+function finish() {
+  state = 'over'; G.wake(false);
+  const ga = kicks[0].filter(Boolean).length, gb = kicks[1].filter(Boolean).length, w = ga > gb ? 0 : 1;
+  $('overTitle').textContent = mode === 'bot' ? (w === 0 ? 'Ты выиграл серию!' : 'Бот оказался точнее') : `Победил ${P[w].name}`;
+  $('overTitle').style.color = P[w].color;
+  $('overScore').textContent = `${ga} : ${gb}`;
+  let note = '';
+  if (mode === 'bot' && w === 0) { const n = G.get('penalty.wins', 0) + 1; G.set('penalty.wins', n); note = `Побед над ботом: ${n}`; }
+  $('overNote').textContent = note;
+  $('over').hidden = false; G.sfx(w === 0 || mode === '2p' ? 'win' : 'lose');
+}
+
+/* ---------- loop ---------- */
+G.loop(dt => {
+  if (state === 'dive') {
+    botDiveTimer -= dt;
+    prompt(`Ты вратарь: жми на угол! ${Math.max(0, botDiveTimer).toFixed(1).replace('.', ',')}`);
+    if (botDiveTimer <= 0) { keeper.zone = 4; state = 'flight-wait'; botDiveTimer = 0.1; }
+  }
+  if (state === 'flight-wait') { botDiveTimer -= dt; if (botDiveTimer <= 0) kick(botShot()); }
+  if (state === 'flight' && ball) {
+    ball.t += dt / ball.dur;
+    if (ball.t > 0.18) keeper.dive = Math.min(1, keeper.dive + dt * 4.2);
+    if (ball.t >= 1) { ball.t = 1; resolve(); }
+  }
+  if (net > 0) net = Math.max(0, net - dt * 1.4);
+  fx.update(dt); shake.update(dt);
+  draw();
+});
+
+/* ---------- render ---------- */
+function draw() {
+  ctx.save(); ctx.translate(shake.x, shake.y);
+  // night stadium sky + pitch
+  const sky = ctx.createLinearGradient(0, 0, 0, goalR.y);
+  sky.addColorStop(0, '#120c2a'); sky.addColorStop(1, '#2b1d5c');
+  ctx.fillStyle = sky; ctx.fillRect(-20, -20, W + 40, goalR.y + 20);
+  for (let i = 0; i < 4; i++) { const x = W * (0.1 + i * 0.27); const g = ctx.createRadialGradient(x, goalR.y * 0.25, 0, x, goalR.y * 0.25, W * 0.25); g.addColorStop(0, 'rgba(255,240,200,.35)'); g.addColorStop(1, 'rgba(255,240,200,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, goalR.y); }
+  const pitchTop = goalR.y;
+  for (let i = 0; i < 9; i++) {
+    const y0 = pitchTop + (H - pitchTop) * Math.pow(i / 9, 1.6), y1 = pitchTop + (H - pitchTop) * Math.pow((i + 1) / 9, 1.6);
+    ctx.fillStyle = i % 2 ? '#1f7a3e' : '#24894a'; ctx.fillRect(-20, y0, W + 40, y1 - y0 + 1);
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-20, pitchTop); ctx.lineTo(W + 20, pitchTop); ctx.stroke();
+  const box = { l: goalR.x - goalR.w * 0.45, r: goalR.x + goalR.w * 1.45 };
+  ctx.beginPath(); ctx.moveTo(box.l + goalR.w * 0.25, pitchTop); ctx.lineTo(box.l - goalR.w * 0.2, H * 0.62); ctx.lineTo(box.r + goalR.w * 0.2, H * 0.62); ctx.lineTo(box.r - goalR.w * 0.25, pitchTop); ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(ballStart.x, ballStart.y + ballR * 0.9, ballR * 0.3, ballR * 0.12, 0, 0, 7); ctx.fill();
+  // net
+  ctx.save();
+  const sway = Math.sin(performance.now() / 40) * net * goalR.h * 0.08;
+  ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.fillRect(goalR.x, goalR.y - goalR.h, goalR.w, goalR.h);
+  ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 1;
+  for (let i = 1; i < 16; i++) { const x = goalR.x + goalR.w * i / 16; ctx.beginPath(); ctx.moveTo(x, goalR.y - goalR.h); ctx.quadraticCurveTo(x + sway, goalR.y - goalR.h / 2, x, goalR.y); ctx.stroke(); }
+  for (let j = 1; j < 6; j++) { const y = goalR.y - goalR.h * j / 6; ctx.beginPath(); ctx.moveTo(goalR.x, y); ctx.quadraticCurveTo(W / 2, y + sway * 1.5, goalR.x + goalR.w, y); ctx.stroke(); }
+  ctx.restore();
+  // keeper (behind the ball when it arrives)
+  drawKeeper();
+  // posts
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(6, goalR.w * 0.022); ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(goalR.x, goalR.y); ctx.lineTo(goalR.x, goalR.y - goalR.h); ctx.lineTo(goalR.x + goalR.w, goalR.y - goalR.h); ctx.lineTo(goalR.x + goalR.w, goalR.y); ctx.stroke();
+  // keeper zone picker
+  if (state === 'pick' || state === 'dive') {
+    ZONES.forEach(([u, v], i) => {
+      const p = toScreen(u, v);
+      ctx.fillStyle = i === pickedZone ? COL.yellow : 'rgba(255,255,255,.18)';
+      ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, goalR.h * 0.2, 0, 7); ctx.fill(); ctx.stroke();
+    });
+  }
+  // ball
+  let bx = ballStart.x, by = ballStart.y, br = ballR, shadowY = ballStart.y + ballR * 0.9;
+  if (ball) {
+    const t = ball.t, e = 1 - Math.pow(1 - t, 1.6);
+    const end = toScreen(Math.max(-1.25, Math.min(1.25, ball.u)), Math.min(1.35, ball.v));
+    const ctrlX = (ballStart.x + end.x) / 2 - ball.curve * goalR.w * 0.9;
+    bx = (1 - e) * (1 - e) * ballStart.x + 2 * (1 - e) * e * ctrlX + e * e * end.x;
+    const groundY = ballStart.y + (goalR.y - ballStart.y) * e;
+    by = groundY - (groundY - end.y) * e - Math.sin(Math.PI * e) * goalR.h * 0.35 * ball.v;
+    br = ballR * (1 - 0.62 * e);
+    shadowY = groundY + br * 0.9;
+  }
+  if (ball) { ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(bx, shadowY, br * 0.9, br * 0.25, 0, 0, 7); ctx.fill(); }
+  drawBall(bx, by, br, ball ? ball.t * 18 : 0);
+  // swipe trail
+  if (swipe && swipe.pts.length > 1) {
+    ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 6; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); swipe.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.stroke();
+  }
+  fx.draw(ctx);
+  if (result) {
+    ctx.font = `900 ${Math.round(W * 0.16)}px Rubik, system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineWidth = 10; ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.strokeText(result.text, W / 2, H * 0.55);
+    ctx.fillStyle = result.color; ctx.fillText(result.text, W / 2, H * 0.55);
+  }
+  ctx.restore();
+}
+function drawBall(x, y, r, spin) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(spin);
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fill();
+  ctx.fillStyle = '#1b1530';
+  for (let i = 0; i < 5; i++) { const a = i * Math.PI * 2 / 5; ctx.beginPath(); ctx.arc(Math.cos(a) * r * 0.62, Math.sin(a) * r * 0.62, r * 0.2, 0, 7); ctx.fill(); }
+  ctx.beginPath(); ctx.arc(0, 0, r * 0.26, 0, 7); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.beginPath(); ctx.arc(x - r * 0.35, y - r * 0.35, r * 0.25, 0, 7); ctx.fill();
+}
+function drawKeeper() {
+  const z = ZONES[keeper.zone] || [0, 0.2];
+  const d = keeper.dive, ease = 1 - Math.pow(1 - d, 3);
+  const u = z[0] * ease * 0.85, v = Math.max(0, (z[1] - 0.25) * ease);
+  const base = toScreen(u, v * 0.8);
+  const s = goalR.h / 100;
+  const tilt = z[0] * ease * 1.1;
+  ctx.save(); ctx.translate(base.x, base.y); ctx.rotate(tilt);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(0, 2, 22 * s, 5 * s, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#1b1530';
+  ctx.fillRect(-12 * s, -32 * s, 9 * s, 32 * s); ctx.fillRect(3 * s, -32 * s, 9 * s, 32 * s);       // legs
+  ctx.fillStyle = keeper.color;
+  ctx.beginPath(); ctx.roundRect ? ctx.roundRect(-17 * s, -74 * s, 34 * s, 44 * s, 8 * s) : ctx.rect(-17 * s, -74 * s, 34 * s, 44 * s); ctx.fill();
+  const armUp = z[1] > 0.5 ? 1 : 0.3;
+  ctx.lineWidth = 9 * s; ctx.lineCap = 'round'; ctx.strokeStyle = keeper.color;
+  ctx.beginPath(); ctx.moveTo(-14 * s, -68 * s); ctx.lineTo(-34 * s, (-68 - 26 * armUp * ease - 10) * s); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(14 * s, -68 * s); ctx.lineTo(34 * s, (-68 - 26 * armUp * ease - 10) * s); ctx.stroke();
+  ctx.fillStyle = COL.yellow;
+  ctx.beginPath(); ctx.arc(-35 * s, (-68 - 26 * armUp * ease - 12) * s, 7 * s, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(35 * s, (-68 - 26 * armUp * ease - 12) * s, 7 * s, 0, 7); ctx.fill();
+  ctx.fillStyle = '#f2c9a0'; ctx.beginPath(); ctx.arc(0, -86 * s, 12 * s, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+/* ---------- menus ---------- */
+function syncMenu() {
+  document.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
+  $('hint2p').hidden = mode !== '2p';
+}
+document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { mode = b.dataset.mode; G.set('penalty.mode', mode); G.sfx('tap'); syncMenu(); }));
+$('start').addEventListener('click', start);
+$('again').addEventListener('click', start);
+$('overMenu').addEventListener('click', () => { $('over').hidden = true; $('board').hidden = true; $('menu').hidden = false; prompt(''); state = 'menu'; });
+G.topbar();
+layout(); syncMenu();
+})();
+</script>
+</body>
+</html>

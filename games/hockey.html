@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#140f24">
+<title>Аэрохоккей — Игротека</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="common.css">
+<style>
+  html, body { overflow: hidden; touch-action: none; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  /* Buttons sit on the centre line: paddles can't go there, so no accidental taps from either player. */
+  .topbar { inset: 50% 0 auto 0; transform: translateY(-50%); padding: 0 16px; }
+  .who { display: flex; justify-content: center; gap: 12px; font-weight: 800; }
+  .who span { padding: 6px 12px; border-radius: 999px; color: var(--on-color); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div class="overlay" id="menu">
+  <div class="panel">
+    <h1>Аэро&shy;хоккей</h1>
+    <p>Держите биту пальцем и бейте шайбу в ворота соперника. Матч до 7 голов.</p>
+    <div class="seg" role="group" aria-label="Режим">
+      <button type="button" data-mode="2p" aria-pressed="true">Вдвоём</button>
+      <button type="button" data-mode="bot" aria-pressed="false">Против бота</button>
+    </div>
+    <div class="seg" role="group" aria-label="Сложность бота" id="levelSeg" hidden>
+      <button type="button" data-level="easy" aria-pressed="false">Лёгкий</button>
+      <button type="button" data-level="normal" aria-pressed="true">Средний</button>
+      <button type="button" data-level="hard" aria-pressed="false">Злой</button>
+    </div>
+    <p id="hint2p">Положите телефон на стол между собой. Нижний играет розовой битой, верхний голубой.</p>
+    <button class="btn" type="button" id="start">Играть</button>
+  </div>
+</div>
+
+<div class="overlay" id="pause" hidden>
+  <div class="panel">
+    <h1>Пауза</h1>
+    <div class="choices">
+      <button class="btn" type="button" id="resume">Продолжить</button>
+      <button class="btn ghost" type="button" id="toMenu">Сменить режим</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="over" hidden>
+  <div class="panel">
+    <h1 id="overTitle"></h1>
+    <div class="big" id="overScore"></div>
+    <p id="overNote"></p>
+    <div class="choices">
+      <button class="btn" type="button" id="again">Ещё матч</button>
+      <button class="btn ghost" type="button" id="overMenu">Сменить режим</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+(() => {
+'use strict';
+const canvas = document.getElementById('c');
+let W = 0, H = 0, ctx;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COL = { pink: css('--pink'), cyan: css('--cyan'), yellow: css('--yellow'), ink: css('--ink'), ink2: css('--ink-2'), line: css('--line'), text: css('--text') };
+
+const WIN = 7;
+let mode = G.get('hockey.mode', '2p'), level = G.get('hockey.level', 'normal');
+let table, R_PAD, R_PUCK, GOAL;
+const pads = [{ x: 0, y: 0, vx: 0, vy: 0, tx: 0, ty: 0, ptr: null, color: COL.pink }, { x: 0, y: 0, vx: 0, vy: 0, tx: 0, ty: 0, ptr: null, color: COL.cyan }];
+const puck = { x: 0, y: 0, vx: 0, vy: 0, trail: [] };
+let score = [0, 0], state = 'menu', freeze = 0, banner = null;
+const fx = new G.Particles(), shake = new G.Shake();
+
+function layout() {
+  ({ w: W, h: H, ctx } = G.fit(canvas));
+  const m = 10, top = Math.max(10, parseInt(getComputedStyle(document.body).getPropertyValue('--sat') || 0));
+  table = { x: m, y: m + top, w: W - m * 2, h: H - m * 2 - top };
+  R_PAD = Math.min(table.w * 0.09, table.h * 0.055);
+  R_PUCK = R_PAD * 0.58;
+  GOAL = table.w * 0.36;
+}
+function home() {
+  pads[0].x = pads[0].tx = W / 2; pads[0].y = pads[0].ty = table.y + table.h * 0.85;
+  pads[1].x = pads[1].tx = W / 2; pads[1].y = pads[1].ty = table.y + table.h * 0.15;
+  pads.forEach(p => { p.vx = p.vy = 0; });
+}
+function servePuck(toward) {
+  // The player who conceded gets the puck on their side.
+  puck.x = W / 2; puck.y = table.y + table.h * (toward === 0 ? 0.62 : 0.38);
+  puck.vx = puck.vy = 0; puck.trail = [];
+}
+addEventListener('resize', () => { layout(); if (state === 'menu') { home(); servePuck(0); } });
+
+/* ---------- input: each finger owns the half it started in ---------- */
+function half(y) { return y > table.y + table.h / 2 ? 0 : 1; }
+canvas.addEventListener('pointerdown', e => {
+  if (state !== 'play') return;
+  const i = half(e.clientY);
+  if (mode === 'bot' && i === 1) return;
+  const p = pads[i];
+  if (p.ptr !== null) return;
+  p.ptr = e.pointerId; p.tx = e.clientX; p.ty = e.clientY;
+  try { canvas.setPointerCapture(e.pointerId); } catch {}
+});
+canvas.addEventListener('pointermove', e => {
+  for (const p of pads) if (p.ptr === e.pointerId) { p.tx = e.clientX; p.ty = e.clientY; }
+});
+const release = e => { for (const p of pads) if (p.ptr === e.pointerId) p.ptr = null; };
+canvas.addEventListener('pointerup', release);
+canvas.addEventListener('pointercancel', release);
+
+/* ---------- bot ---------- */
+const BOT = { easy: { speed: 0.9, react: 0.25, aim: 0.5 }, normal: { speed: 1.5, react: 0.12, aim: 0.8 }, hard: { speed: 2.4, react: 0.04, aim: 1 } };
+let botThink = 0;
+function botStep(dt) {
+  const b = pads[1], cfg = BOT[level];
+  botThink -= dt;
+  if (botThink > 0) return;
+  botThink = cfg.react;
+  const mid = table.y + table.h / 2, homeY = table.y + table.h * 0.13;
+  const inMyHalf = puck.y < mid;
+  if (inMyHalf && (puck.vy < 60 || puck.y < b.y + R_PAD)) {
+    // Attack: come from behind the puck, aiming at the opponent goal with a little error.
+    const err = (1 - cfg.aim) * (Math.random() - 0.5) * table.w * 0.4;
+    const gx = W / 2 + err, gy = table.y + table.h;
+    const ang = Math.atan2(gy - puck.y, gx - puck.x);
+    if (puck.y > b.y) { b.tx = puck.x - Math.cos(ang) * R_PAD * 0.6; b.ty = puck.y - Math.sin(ang) * R_PAD * 0.6; }
+    else { b.tx = puck.x + (puck.x > W / 2 ? 1 : -1) * R_PAD * 1.6; b.ty = puck.y - R_PAD * 2; }
+  } else {
+    // Defend: sit between the puck and our goal.
+    const t = 0.25;
+    b.tx = W / 2 + (puck.x - W / 2) * (0.35 + 0.3 * cfg.aim);
+    b.ty = homeY + (puck.y - homeY) * t * (inMyHalf ? 1 : 0.3);
+  }
+}
+
+/* ---------- physics ---------- */
+function movePad(p, i, dt) {
+  const maxV = (mode === 'bot' && i === 1 ? BOT[level].speed : 6) * table.h;
+  const minY = i === 0 ? table.y + table.h / 2 + R_PAD : table.y + R_PAD;
+  const maxY = i === 0 ? table.y + table.h - R_PAD : table.y + table.h / 2 - R_PAD;
+  const tx = Math.max(table.x + R_PAD, Math.min(table.x + table.w - R_PAD, p.tx));
+  const ty = Math.max(minY, Math.min(maxY, p.ty));
+  let dx = tx - p.x, dy = ty - p.y;
+  const d = Math.hypot(dx, dy), step = maxV * dt;
+  if (d > step) { dx *= step / d; dy *= step / d; }
+  p.vx = dx / dt; p.vy = dy / dt;
+  p.x += dx; p.y += dy;
+}
+function collidePad(p) {
+  const dx = puck.x - p.x, dy = puck.y - p.y, d = Math.hypot(dx, dy), min = R_PAD + R_PUCK;
+  if (d >= min || d === 0) return;
+  const nx = dx / d, ny = dy / d;
+  puck.x = p.x + nx * min; puck.y = p.y + ny * min;
+  const rvx = puck.vx - p.vx, rvy = puck.vy - p.vy, vn = rvx * nx + rvy * ny;
+  if (vn < 0) {
+    puck.vx -= 1.9 * vn * nx; puck.vy -= 1.9 * vn * ny;
+    const k = Math.min(1, -vn / (table.h * 3));
+    G.sfx('hit', k); G.buzz(Math.round(8 + 20 * k)); shake.add(2 + 8 * k);
+    fx.emit(puck.x - nx * R_PUCK, puck.y - ny * R_PUCK, { n: 6 + Math.round(14 * k), color: [p.color, COL.yellow], speed: 200 + 500 * k, life: 0.35, size: 4, gravity: 0, angle: Math.atan2(-ny, -nx), spread: 2.2 });
+  }
+}
+function step(dt) {
+  movePad(pads[0], 0, dt);
+  if (mode === 'bot') botStep(dt);
+  movePad(pads[1], 1, dt);
+  const max = table.h * 4.2;
+  const sub = 4, h = dt / sub;
+  for (let s = 0; s < sub; s++) {
+    puck.x += puck.vx * h; puck.y += puck.vy * h;
+    collidePad(pads[0]); collidePad(pads[1]);
+    const L = table.x + R_PUCK, Rr = table.x + table.w - R_PUCK, T = table.y + R_PUCK, B = table.y + table.h - R_PUCK;
+    const inGoal = Math.abs(puck.x - W / 2) < GOAL / 2 - R_PUCK * 0.3;
+    if (puck.x < L) { puck.x = L; puck.vx = Math.abs(puck.vx) * 0.9; wallHit(puck.vx); }
+    if (puck.x > Rr) { puck.x = Rr; puck.vx = -Math.abs(puck.vx) * 0.9; wallHit(puck.vx); }
+    if (puck.y < T) {
+      if (inGoal) { if (puck.y < table.y - R_PUCK) return goal(0); }
+      else { puck.y = T; puck.vy = Math.abs(puck.vy) * 0.9; wallHit(puck.vy); }
+    }
+    if (puck.y > B) {
+      if (inGoal) { if (puck.y > table.y + table.h + R_PUCK) return goal(1); }
+      else { puck.y = B; puck.vy = -Math.abs(puck.vy) * 0.9; wallHit(puck.vy); }
+    }
+  }
+  const sp = Math.hypot(puck.vx, puck.vy);
+  if (sp > max) { puck.vx *= max / sp; puck.vy *= max / sp; }
+  const damp = Math.exp(-0.45 * dt); puck.vx *= damp; puck.vy *= damp;
+  puck.trail.push({ x: puck.x, y: puck.y }); if (puck.trail.length > 12) puck.trail.shift();
+}
+function wallHit(v) {
+  const k = Math.min(1, Math.abs(v) / (table.h * 3));
+  if (k > 0.05) { G.sfx('wall', k); fx.emit(puck.x, puck.y, { n: Math.round(4 * k + 1), color: COL.yellow, speed: 150, life: 0.25, size: 3, gravity: 0 }); }
+}
+function goal(scorer) {
+  score[scorer]++;
+  G.sfx('goal'); G.buzz([40, 40, 90]); shake.add(22);
+  const gy = scorer === 0 ? table.y : table.y + table.h;
+  fx.emit(W / 2, gy, { n: 70, color: [pads[scorer].color, COL.yellow, '#fff'], speed: 700, life: 1.1, size: 6, gravity: 500, shape: 'rect', angle: scorer === 0 ? Math.PI / 2 : -Math.PI / 2, spread: 2.4 });
+  banner = { text: 'ГОЛ!', color: pads[scorer].color, t: 1.2, side: scorer };
+  if (score[scorer] >= WIN) { state = 'over'; setTimeout(showOver, 900); return; }
+  freeze = 1.1; servePuck(1 - scorer); home();
+}
+
+/* ---------- render ---------- */
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h); }
+function draw() {
+  ctx.save();
+  ctx.fillStyle = COL.ink; ctx.fillRect(0, 0, W, H);
+  ctx.translate(shake.x, shake.y);
+  // table
+  rr(table.x, table.y, table.w, table.h, 28); ctx.fillStyle = COL.ink2; ctx.fill();
+  ctx.lineWidth = 4; ctx.strokeStyle = COL.line; ctx.stroke();
+  const mid = table.y + table.h / 2;
+  ctx.strokeStyle = COL.line; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(table.x, mid); ctx.lineTo(table.x + table.w, mid); ctx.stroke();
+  ctx.beginPath(); ctx.arc(W / 2, mid, table.w * 0.16, 0, 7); ctx.stroke();
+  ctx.beginPath(); ctx.arc(W / 2, table.y, GOAL * 0.62, 0, Math.PI); ctx.stroke();
+  ctx.beginPath(); ctx.arc(W / 2, table.y + table.h, GOAL * 0.62, Math.PI, 0); ctx.stroke();
+  // goals glow in the owner's colour
+  ctx.lineWidth = 8; ctx.lineCap = 'round';
+  ctx.strokeStyle = pads[1].color; ctx.beginPath(); ctx.moveTo(W / 2 - GOAL / 2, table.y); ctx.lineTo(W / 2 + GOAL / 2, table.y); ctx.stroke();
+  ctx.strokeStyle = pads[0].color; ctx.beginPath(); ctx.moveTo(W / 2 - GOAL / 2, table.y + table.h); ctx.lineTo(W / 2 + GOAL / 2, table.y + table.h); ctx.stroke();
+  // score, readable for each player
+  ctx.font = `900 ${Math.round(table.w * 0.2)}px Rubik, system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.globalAlpha = 0.22;
+  ctx.fillStyle = pads[0].color; ctx.fillText(score[0], W / 2, mid + table.h * 0.13);
+  ctx.save(); ctx.translate(W / 2, mid - table.h * 0.13); if (mode === '2p') ctx.rotate(Math.PI); ctx.fillStyle = pads[1].color; ctx.fillText(score[1], 0, 0); ctx.restore();
+  ctx.globalAlpha = 1;
+  // puck trail + puck
+  const sp = Math.hypot(puck.vx, puck.vy) / (table.h * 3);
+  puck.trail.forEach((t, i) => { ctx.globalAlpha = (i / puck.trail.length) * 0.35 * Math.min(1, sp * 1.5); ctx.fillStyle = COL.yellow; ctx.beginPath(); ctx.arc(t.x, t.y, R_PUCK * (0.5 + i / puck.trail.length / 2), 0, 7); ctx.fill(); });
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = COL.yellow; ctx.beginPath(); ctx.arc(puck.x, puck.y, R_PUCK, 0, 7); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.beginPath(); ctx.arc(puck.x - R_PUCK * 0.3, puck.y - R_PUCK * 0.3, R_PUCK * 0.35, 0, 7); ctx.fill();
+  // paddles
+  for (const p of pads) {
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.arc(p.x + 3, p.y + 5, R_PAD, 0, 7); ctx.fill();
+    ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, R_PAD, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.beginPath(); ctx.arc(p.x, p.y, R_PAD * 0.62, 0, 7); ctx.fill();
+    ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y - 2, R_PAD * 0.42, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.4)'; ctx.beginPath(); ctx.arc(p.x - R_PAD * 0.15, p.y - R_PAD * 0.2, R_PAD * 0.16, 0, 7); ctx.fill();
+  }
+  fx.draw(ctx);
+  // goal banner, shown to both players
+  if (banner) {
+    const k = Math.min(1, (1.2 - banner.t) * 6), s = 0.6 + 0.4 * k;
+    ctx.font = `900 ${Math.round(table.w * 0.22)}px Rubik, system-ui`; ctx.fillStyle = banner.color; ctx.globalAlpha = Math.min(1, banner.t * 3);
+    ctx.save(); ctx.translate(W / 2, mid + table.h * 0.25); ctx.scale(s, s); ctx.fillText(banner.text, 0, 0); ctx.restore();
+    if (mode === '2p') { ctx.save(); ctx.translate(W / 2, mid - table.h * 0.25); ctx.rotate(Math.PI); ctx.scale(s, s); ctx.fillText(banner.text, 0, 0); ctx.restore(); }
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+
+G.loop(dt => {
+  if (state === 'play') {
+    if (freeze > 0) { freeze -= dt; movePad(pads[0], 0, dt); if (mode === 'bot') botStep(dt); movePad(pads[1], 1, dt); }
+    else step(dt);
+  }
+  if (banner) { banner.t -= dt; if (banner.t <= 0) banner = null; }
+  fx.update(dt); shake.update(dt);
+  draw();
+});
+
+/* ---------- menus ---------- */
+const $ = id => document.getElementById(id);
+function syncMenu() {
+  document.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
+  document.querySelectorAll('[data-level]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.level === level)));
+  $('levelSeg').hidden = mode !== 'bot'; $('hint2p').hidden = mode !== '2p';
+}
+document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { mode = b.dataset.mode; G.set('hockey.mode', mode); G.sfx('tap'); syncMenu(); }));
+document.querySelectorAll('[data-level]').forEach(b => b.addEventListener('click', () => { level = b.dataset.level; G.set('hockey.level', level); G.sfx('tap'); syncMenu(); }));
+function start() {
+  score = [0, 0]; home(); servePuck(Math.random() < 0.5 ? 0 : 1); freeze = 0.6; banner = null;
+  pads.forEach(p => { p.ptr = null; });
+  ['menu', 'over', 'pause'].forEach(id => { $(id).hidden = true; });
+  state = 'play'; G.sfx('whistle'); G.wake(true);
+}
+function showOver() {
+  const youWon = score[0] > score[1];
+  $('overTitle').textContent = mode === 'bot' ? (youWon ? 'Победа!' : 'Бот выиграл') : (youWon ? 'Победил розовый' : 'Победил голубой');
+  $('overTitle').style.color = youWon ? COL.pink : COL.cyan;
+  $('overScore').textContent = `${score[0]} : ${score[1]}`;
+  let note = '';
+  if (mode === 'bot' && youWon) {
+    const wins = G.get('hockey.wins.' + level, 0) + 1; G.set('hockey.wins.' + level, wins);
+    note = `Побед над ботом («${{ easy: 'лёгкий', normal: 'средний', hard: 'злой' }[level]}»): ${wins}`;
+  }
+  $('overNote').textContent = note;
+  $('over').hidden = false; G.sfx(youWon || mode === '2p' ? 'win' : 'lose'); G.wake(false);
+}
+$('start').addEventListener('click', start);
+$('again').addEventListener('click', start);
+const toMenu = () => { state = 'menu'; ['over', 'pause'].forEach(id => { $(id).hidden = true; }); $('menu').hidden = false; G.wake(false); };
+$('overMenu').addEventListener('click', toMenu);
+$('toMenu').addEventListener('click', toMenu);
+$('resume').addEventListener('click', () => { $('pause').hidden = true; state = 'play'; });
+G.topbar({ pause: () => { if (state === 'play') { state = 'paused'; $('pause').hidden = false; } } });
+document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'play') { state = 'paused'; $('pause').hidden = false; } });
+
+layout(); home(); servePuck(0); syncMenu();
+})();
+</script>
+</body>
+</html>

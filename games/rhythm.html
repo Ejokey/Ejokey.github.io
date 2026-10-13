@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#140f24">
+<title>Ритм — Игротека</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="common.css">
+<style>
+  html, body { overflow: hidden; touch-action: none; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .songs { display: grid; gap: 10px; }
+  .song {
+    display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 10px; text-align: left;
+    padding: 14px 16px; border-radius: 16px; border: 3px solid transparent; background: var(--ink-2);
+  }
+  .song b { font-size: 20px; font-weight: 900; }
+  .song small { grid-column: 1; color: var(--muted); font-size: 14px; font-weight: 600; }
+  .song span { grid-row: 1 / span 2; grid-column: 2; font-size: 13px; font-weight: 800; color: var(--muted); text-align: right; }
+  .song[aria-pressed="true"] { border-color: var(--c); background: color-mix(in oklch, var(--c) 16%, var(--ink-2)); }
+  .lat { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; font-weight: 700; color: var(--muted); font-size: 14px; }
+  .lat input { accent-color: var(--cyan); width: 100%; }
+  .grade { font-size: 96px; font-weight: 900; line-height: 1; }
+  .res { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .res div { display: grid; padding: 8px; border-radius: 12px; background: var(--ink-2); }
+  .res b { font-size: 24px; font-weight: 900; font-variant-numeric: tabular-nums; }
+  .res small { font-size: 12px; color: var(--muted); font-weight: 700; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div class="overlay" id="menu">
+  <div class="panel">
+    <h1>Ритм</h1>
+    <p>Жми на дорожку, когда нота долетает до линии. Попадай в такт, держи комбо.</p>
+    <div class="songs" id="songs"></div>
+    <div class="seg" role="group" aria-label="Сложность">
+      <button type="button" data-diff="0" aria-pressed="false">Легко</button>
+      <button type="button" data-diff="1" aria-pressed="true">Норм</button>
+      <button type="button" data-diff="2" aria-pressed="false">Жёстко</button>
+    </div>
+    <label class="lat">Задержка<input type="range" id="lat" min="-150" max="250" step="5"><output id="latOut"></output></label>
+    <button class="btn" type="button" id="start">Играть</button>
+  </div>
+</div>
+
+<div class="overlay" id="over" hidden>
+  <div class="panel">
+    <div class="grade" id="grade"></div>
+    <h1 id="overTitle" style="font-size:28px"></h1>
+    <div class="res" id="res"></div>
+    <p id="overNote"></p>
+    <div class="choices">
+      <button class="btn" type="button" id="again">Ещё раз</button>
+      <button class="btn ghost" type="button" id="overMenu">Другой трек</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="pause" hidden>
+  <div class="panel">
+    <h1>Пауза</h1>
+    <div class="choices">
+      <button class="btn" type="button" id="restart">Начать заново</button>
+      <button class="btn ghost" type="button" id="quit">Выйти в меню</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const canvas = $('c');
+let W, H, ctx;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COL = { pink: css('--pink'), cyan: css('--cyan'), yellow: css('--yellow'), lime: css('--lime'), orange: css('--orange'), red: css('--red'), ink: css('--ink'), ink2: css('--ink-2'), text: css('--text'), muted: css('--muted') };
+const LANE_COL = [COL.pink, COL.yellow, COL.lime, COL.cyan];
+
+/* ---------- songs: everything is generated from a seed, so notes always match the music ---------- */
+const SONGS = [
+  { id: 'neon', name: 'Неон', desc: 'Синтвейв, ночной город', bpm: 112, root: 57, mode: 'minor', prog: [0, 5, 3, 4], bars: 26, seed: 7, color: COL.pink, style: 'synth' },
+  { id: 'turbo', name: 'Турбо', desc: 'Быстрый драм-н-бейс', bpm: 164, root: 50, mode: 'minor', prog: [0, 3, 5, 4], bars: 40, seed: 21, color: COL.cyan, style: 'dnb' },
+  { id: 'chill', name: 'Чилл', desc: 'Лоу-фай, расслабиться', bpm: 84, root: 60, mode: 'major', prog: [0, 5, 3, 4], bars: 20, seed: 3, color: COL.lime, style: 'lofi' },
+];
+const SCALES = { minor: [0, 2, 3, 5, 7, 8, 10], major: [0, 2, 4, 5, 7, 9, 11] };
+function rng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
+
+// Build the arrangement: per 16th step, which drums/bass/lead play; and the note chart from lead + kicks.
+function compose(song, diff) {
+  const r = rng(song.seed), sc = SCALES[song.mode];
+  const steps = song.bars * 16, step = 60 / song.bpm / 4;
+  const ev = [];                       // {t, kind, midi}
+  const deg = d => song.root + sc[((d % 7) + 7) % 7] + 12 * Math.floor(d / 7);
+  // A 2-bar lead motif repeated with variation keeps it musical and learnable.
+  const rhythmA = song.style === 'dnb' ? [0, 3, 6, 8, 10, 12, 14] : song.style === 'lofi' ? [0, 6, 8, 12] : [0, 2, 4, 7, 8, 10, 12, 14];
+  const rhythmB = song.style === 'dnb' ? [0, 2, 4, 6, 8, 11, 12, 14] : song.style === 'lofi' ? [0, 4, 8, 10, 14] : [0, 3, 6, 8, 11, 12, 14];
+  let d = 4;
+  const motif = [];
+  for (let b = 0; b < 2; b++) for (const s of (b ? rhythmB : rhythmA)) { d += Math.floor(r() * 5) - 2; d = Math.max(0, Math.min(9, d)); motif.push({ s: b * 16 + s, d }); }
+  const intro = 2, outro = 1;
+  for (let bar = 0; bar < song.bars; bar++) {
+    const chord = song.prog[bar % 4], t0 = bar * 16;
+    const section = bar < intro ? 'intro' : bar >= song.bars - outro ? 'outro' : Math.floor((bar - intro) / 8) % 2 ? 'B' : 'A';
+    for (let s = 0; s < 16; s++) {
+      const t = (t0 + s) * step;
+      // drums
+      if (song.style === 'dnb') {
+        if (s === 0 || s === 10) ev.push({ t, kind: 'kick' });
+        if (s === 4 || s === 12) ev.push({ t, kind: 'snare' });
+        if (s % 2 === 0 || (section === 'B' && s % 2)) ev.push({ t, kind: 'hat', v: s % 4 === 2 ? 0.6 : 0.3 });
+      } else if (song.style === 'lofi') {
+        if (s === 0 || s === 7 || s === 10) ev.push({ t, kind: 'kick' });
+        if (s === 4 || s === 12) ev.push({ t, kind: 'snare' });
+        if (s % 2 === 0) ev.push({ t: t + (s % 4 === 2 ? step * 0.35 : 0), kind: 'hat', v: 0.25 });
+      } else {
+        if (s % 4 === 0) ev.push({ t, kind: 'kick' });
+        if (s === 4 || s === 12) ev.push({ t, kind: 'snare' });
+        if (s % 2 === 1) ev.push({ t, kind: 'hat', v: 0.35 });
+      }
+      // bass on chord root
+      if (section !== 'intro' || song.style === 'lofi') {
+        const bassHits = song.style === 'dnb' ? [0, 3, 6, 10] : song.style === 'lofi' ? [0, 8] : [0, 2, 4, 6, 8, 10, 12, 14];
+        if (bassHits.includes(s)) ev.push({ t, kind: 'bass', midi: deg(chord) - 24, len: step * (song.style === 'synth' ? 1.6 : 3.5) });
+      }
+      if (s === 0) ev.push({ t, kind: 'pad', midis: [deg(chord), deg(chord + 2), deg(chord + 4)], len: step * 16 });
+    }
+    // lead
+    if (section !== 'intro' && section !== 'outro') {
+      const variant = Math.floor((bar - intro) / 2) % 4;
+      for (const m of motif) {
+        if (Math.floor(m.s / 16) !== (bar - intro) % 2) continue;
+        let dd = m.d + (section === 'B' ? 2 : 0) + (variant === 3 ? -1 : 0) + chord % 3;
+        ev.push({ t: (t0 + (m.s % 16)) * step, kind: 'lead', midi: deg(dd) + 12, deg: dd, len: step * 1.8 });
+      }
+    }
+  }
+  ev.sort((a, b) => a.t - b.t);
+  // Chart: lead notes become taps; easy keeps only notes on beats, hard adds kicks as a second lane.
+  const leads = ev.filter(e => e.kind === 'lead');
+  // Lanes follow pitch (higher note = further right) but split by quantiles, so all four lanes get used.
+  const degs = leads.map(e => e.deg).sort((a, b) => a - b);
+  const laneOf = new Map();
+  [...new Set(degs)].forEach(dd => { const below = degs.filter(x => x < dd).length, same = degs.filter(x => x === dd).length; laneOf.set(dd, Math.min(3, Math.floor((below + same / 2) / degs.length * 4))); });
+  const lane = dd => laneOf.get(dd);
+  const notes = [];
+  const beat = step * 4;
+  for (const e of leads) {
+    const onBeat = Math.abs(e.t / beat - Math.round(e.t / beat)) < 0.01;
+    const on8 = Math.abs(e.t / (beat / 2) - Math.round(e.t / (beat / 2))) < 0.01;
+    if (diff === 0 && !onBeat) continue;
+    if (diff === 1 && !on8) continue;
+    notes.push({ t: e.t, lane: lane(e.deg) });
+  }
+  if (diff === 2) {
+    for (const e of ev) if (e.kind === 'snare' && e.t > intro * 16 * step && e.t < (song.bars - outro) * 16 * step) {
+      const used = notes.filter(n => Math.abs(n.t - e.t) < 0.01).map(n => n.lane);
+      const free = [0, 3, 1, 2].find(l => !used.includes(l));
+      if (free !== undefined && used.length < 2) notes.push({ t: e.t, lane: free });
+    }
+  }
+  // never two notes in one lane closer than an 8th apart
+  notes.sort((a, b) => a.t - b.t);
+  const last = [-1, -1, -1, -1], clean = [];
+  for (const n of notes) {
+    if (n.t - last[n.lane] < step * 1.9) { const alt = [0, 1, 2, 3].sort((a, b) => Math.abs(a - n.lane) - Math.abs(b - n.lane)).find(l => n.t - last[l] >= step * 1.9 && !clean.some(c => c.lane === l && Math.abs(c.t - n.t) < 0.01)); if (alt === undefined) continue; n.lane = alt; }
+    last[n.lane] = n.t; clean.push({ ...n, hit: null });
+  }
+  return { ev, notes: clean, length: song.bars * 16 * step, beat };
+}
+
+/* ---------- audio engine with look-ahead scheduling ---------- */
+let ac = null, master = null, noiseBuf = null;
+function audio() {
+  if (!ac) {
+    ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    master = ac.createGain(); master.gain.value = 0.7;
+    const comp = ac.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4;
+    master.connect(comp); comp.connect(ac.destination);
+    noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+    const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  if (ac.state === 'suspended') ac.resume();
+  return ac;
+}
+const hz = m => 440 * Math.pow(2, (m - 69) / 12);
+function play(e, at, style) {
+  const c = ac;
+  if (e.kind === 'kick') {
+    const o = c.createOscillator(), g = c.createGain();
+    o.frequency.setValueAtTime(style === 'lofi' ? 120 : 150, at); o.frequency.exponentialRampToValueAtTime(42, at + 0.12);
+    g.gain.setValueAtTime(1, at); g.gain.exponentialRampToValueAtTime(0.001, at + 0.3);
+    o.connect(g); g.connect(master); o.start(at); o.stop(at + 0.32);
+  } else if (e.kind === 'snare' || e.kind === 'hat') {
+    const s = c.createBufferSource(); s.buffer = noiseBuf;
+    const f = c.createBiquadFilter(); f.type = e.kind === 'hat' ? 'highpass' : 'bandpass'; f.frequency.value = e.kind === 'hat' ? 7000 : 1800;
+    const g = c.createGain(), len = e.kind === 'hat' ? 0.04 : 0.16, v = e.kind === 'hat' ? (e.v || 0.3) * (style === 'lofi' ? 0.6 : 1) : 0.6;
+    g.gain.setValueAtTime(v, at); g.gain.exponentialRampToValueAtTime(0.001, at + len);
+    s.connect(f); f.connect(g); g.connect(master); s.start(at, Math.random() * 0.5); s.stop(at + len + 0.01);
+    if (e.kind === 'snare') { const o = c.createOscillator(), og = c.createGain(); o.frequency.value = 190; og.gain.setValueAtTime(0.3, at); og.gain.exponentialRampToValueAtTime(0.001, at + 0.08); o.connect(og); og.connect(master); o.start(at); o.stop(at + 0.1); }
+  } else if (e.kind === 'bass') {
+    const o = c.createOscillator(), f = c.createBiquadFilter(), g = c.createGain();
+    o.type = style === 'lofi' ? 'triangle' : 'sawtooth'; o.frequency.value = hz(e.midi);
+    f.type = 'lowpass'; f.frequency.setValueAtTime(style === 'dnb' ? 900 : 600, at); f.frequency.exponentialRampToValueAtTime(180, at + e.len);
+    g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(0.38, at + 0.01); g.gain.exponentialRampToValueAtTime(0.001, at + e.len);
+    o.connect(f); f.connect(g); g.connect(master); o.start(at); o.stop(at + e.len + 0.02);
+  } else if (e.kind === 'pad') {
+    for (const m of e.midis) for (const det of [-6, 6]) {
+      const o = c.createOscillator(), f = c.createBiquadFilter(), g = c.createGain();
+      o.type = style === 'lofi' ? 'triangle' : 'sawtooth'; o.frequency.value = hz(m); o.detune.value = det;
+      f.type = 'lowpass'; f.frequency.value = style === 'lofi' ? 900 : 1400;
+      g.gain.setValueAtTime(0.0001, at); g.gain.linearRampToValueAtTime(0.035, at + 0.3); g.gain.linearRampToValueAtTime(0.0001, at + e.len);
+      o.connect(f); f.connect(g); g.connect(master); o.start(at); o.stop(at + e.len + 0.05);
+    }
+  } else if (e.kind === 'lead') {
+    const o = c.createOscillator(), o2 = c.createOscillator(), f = c.createBiquadFilter(), g = c.createGain();
+    o.type = style === 'lofi' ? 'sine' : 'square'; o2.type = 'sawtooth'; o.frequency.value = o2.frequency.value = hz(e.midi); o2.detune.value = 8;
+    f.type = 'lowpass'; f.frequency.setValueAtTime(style === 'lofi' ? 2200 : 3800, at); f.frequency.exponentialRampToValueAtTime(900, at + e.len);
+    g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(style === 'lofi' ? 0.22 : 0.14, at + 0.008); g.gain.exponentialRampToValueAtTime(0.001, at + e.len);
+    o.connect(f); o2.connect(f); f.connect(g); g.connect(master); o.start(at); o2.start(at); o.stop(at + e.len + 0.02); o2.stop(at + e.len + 0.02);
+  }
+}
+
+/* ---------- game state ---------- */
+let song = SONGS[G.get('rhythm.song', 0)] || SONGS[0], diff = G.get('rhythm.diff', 1), latency = G.get('rhythm.lat', 0);
+let chart = null, t0 = 0, evIdx = 0, state = 'menu', schedTimer = 0;
+let combo = 0, maxCombo = 0, scoreV = 0, counts = { perfect: 0, great: 0, good: 0, miss: 0 }, judge = null, fever = false;
+const laneFlash = [0, 0, 0, 0];
+const fx = new G.Particles(), shake = new G.Shake();
+const LEAD = 2.0;          // seconds a note is visible before the hit line
+const WIN = { perfect: 0.045, great: 0.09, good: 0.14 };
+
+function layout() { ({ w: W, h: H, ctx } = G.fit(canvas)); }
+addEventListener('resize', layout);
+const hitY = () => H * 0.84;
+const now = () => ac ? ac.currentTime - t0 - latency / 1000 : 0;
+
+function startSong() {
+  audio();
+  chart = compose(song, diff);
+  window.__rhythm = { chart, now };   // for automated checks
+  combo = maxCombo = scoreV = 0; counts = { perfect: 0, great: 0, good: 0, miss: 0 }; judge = null; fever = false; evIdx = 0;
+  t0 = ac.currentTime + LEAD + 0.3;
+  state = 'play'; ['menu', 'over', 'pause'].forEach(id => { $(id).hidden = true; });
+  G.wake(true);
+  clearInterval(schedTimer);
+  schedTimer = setInterval(schedule, 25);
+  schedule();
+}
+function schedule() {
+  if (state !== 'play') return;
+  const horizon = ac.currentTime + 0.15;
+  while (evIdx < chart.ev.length && t0 + chart.ev[evIdx].t < horizon) { const e = chart.ev[evIdx++]; play(e, Math.max(ac.currentTime, t0 + e.t), song.style); }
+}
+function stopSong() { clearInterval(schedTimer); if (master) { const g = master.gain; g.cancelScheduledValues(ac.currentTime); g.setValueAtTime(g.value, ac.currentTime); g.linearRampToValueAtTime(0, ac.currentTime + 0.15); setTimeout(() => { master.disconnect(); master = null; ac.close(); ac = null; }, 250); } }
+
+/* ---------- input ---------- */
+canvas.addEventListener('pointerdown', e => {
+  if (state !== 'play') return;
+  const lane = Math.max(0, Math.min(3, Math.floor(e.clientX / (W / 4))));
+  laneFlash[lane] = 1;
+  const t = now();
+  let best = null, bd = Infinity;
+  for (const n of chart.notes) { if (n.hit || n.lane !== lane) continue; const d = Math.abs(n.t - t); if (d < bd) { bd = d; best = n; } if (n.t - t > WIN.good) break; }
+  if (!best || bd > WIN.good) { G.buzz(4); return; }
+  const grade = bd <= WIN.perfect ? 'perfect' : bd <= WIN.great ? 'great' : 'good';
+  best.hit = grade; counts[grade]++;
+  combo++; maxCombo = Math.max(maxCombo, combo);
+  if (combo === 30 && !fever) { fever = true; shake.add(12); G.buzz([20, 30, 60]); }
+  const base = grade === 'perfect' ? 300 : grade === 'great' ? 200 : 100;
+  scoreV += Math.round(base * (1 + Math.min(combo, 100) / 50) * (fever ? 2 : 1));
+  judge = { text: grade === 'perfect' ? 'ИДЕАЛЬНО' : grade === 'great' ? 'ОТЛИЧНО' : 'НОРМ', color: grade === 'perfect' ? COL.yellow : grade === 'great' ? COL.lime : COL.cyan, t: 0.5 };
+  const x = (lane + 0.5) * W / 4;
+  fx.emit(x, hitY(), { n: grade === 'perfect' ? 22 : 12, color: [LANE_COL[lane], '#fff', fever ? COL.orange : LANE_COL[lane]], speed: grade === 'perfect' ? 520 : 360, life: 0.45, size: 5, gravity: 400, angle: -Math.PI / 2, spread: 2.6 });
+  G.buzz(grade === 'perfect' ? 12 : 7);
+  if (combo % 50 === 0) shake.add(8);
+});
+function miss(n) {
+  n.hit = 'miss'; counts.miss++;
+  if (combo >= 10) shake.add(6);
+  combo = 0; fever = false;
+  judge = { text: 'МИМО', color: COL.red, t: 0.5 };
+}
+
+/* ---------- loop ---------- */
+G.loop(dt => {
+  if (state === 'play') {
+    const t = now();
+    for (const n of chart.notes) { if (!n.hit && t - n.t > WIN.good) miss(n); if (n.t > t) break; }
+    if (t > chart.length + 0.8) finish();
+  }
+  for (let i = 0; i < 4; i++) laneFlash[i] = Math.max(0, laneFlash[i] - dt * 6);
+  if (judge) { judge.t -= dt; if (judge.t <= 0) judge = null; }
+  fx.update(dt); shake.update(dt);
+  draw();
+});
+
+function draw() {
+  ctx.save(); ctx.translate(shake.x, shake.y);
+  const t = state === 'play' || state === 'paused' ? now() : 0;
+  // background pulses with the beat
+  const beatPhase = chart && state === 'play' ? 1 - ((t / chart.beat) % 1 + 1) % 1 : 0;
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#0e0a20'); bg.addColorStop(1, fever ? '#3b1430' : '#1d1444');
+  ctx.fillStyle = bg; ctx.fillRect(-20, -20, W + 40, H + 40);
+  ctx.globalAlpha = 0.12 * beatPhase * beatPhase; ctx.fillStyle = song.color; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
+  // perspective grid lines for speed feel
+  ctx.strokeStyle = 'rgba(255,255,255,.05)'; ctx.lineWidth = 2;
+  for (let i = 0; i < 12; i++) { const y = ((i / 12 + (t * 0.5) % (1 / 12)) * H); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  const lw = W / 4, hy = hitY();
+  for (let l = 0; l < 4; l++) {
+    const x = l * lw;
+    ctx.fillStyle = l % 2 ? 'rgba(255,255,255,.025)' : 'rgba(255,255,255,.05)'; ctx.fillRect(x, 0, lw, H);
+    if (laneFlash[l] > 0) { const g = ctx.createLinearGradient(0, hy, 0, hy - H * 0.5); g.addColorStop(0, LANE_COL[l]); g.addColorStop(1, 'transparent'); ctx.globalAlpha = laneFlash[l] * 0.45; ctx.fillStyle = g; ctx.fillRect(x, hy - H * 0.5, lw, H * 0.5); ctx.globalAlpha = 1; }
+  }
+  // hit line + targets
+  ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillRect(0, hy - 2, W, 4);
+  for (let l = 0; l < 4; l++) {
+    const cx = (l + 0.5) * lw, r = lw * 0.32 * (1 + laneFlash[l] * 0.15);
+    ctx.strokeStyle = LANE_COL[l]; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(cx, hy, r, 0, 7); ctx.stroke();
+    ctx.fillStyle = LANE_COL[l]; ctx.globalAlpha = 0.15 + laneFlash[l] * 0.6; ctx.beginPath(); ctx.arc(cx, hy, r, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+  }
+  // notes
+  if (chart && (state === 'play' || state === 'paused')) {
+    const speed = hy / LEAD;
+    for (const n of chart.notes) {
+      const dtN = n.t - t;
+      if (dtN > LEAD + 0.1) break;
+      if (n.hit && n.hit !== 'miss') continue;
+      if (dtN < -0.4) continue;
+      const y = hy - dtN * speed, cx = (n.lane + 0.5) * lw, r = lw * 0.3;
+      ctx.globalAlpha = n.hit === 'miss' ? 0.25 : 1;
+      ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.arc(cx, y + 5, r, 0, 7); ctx.fill();
+      ctx.fillStyle = fever ? COL.orange : LANE_COL[n.lane]; ctx.beginPath(); ctx.arc(cx, y, r, 0, 7); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.45)'; ctx.beginPath(); ctx.arc(cx - r * 0.3, y - r * 0.3, r * 0.3, 0, 7); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+  fx.draw(ctx);
+  // HUD
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if (state === 'play' || state === 'paused') {
+    ctx.font = `900 22px Rubik, system-ui`; ctx.fillStyle = COL.text; ctx.fillText(scoreV.toLocaleString('ru-RU'), W / 2, 34 + (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sat')) || 0));
+    if (combo >= 3) {
+      const s = 1 + Math.min(0.5, laneFlash.reduce((a, b) => Math.max(a, b), 0) * 0.25);
+      ctx.save(); ctx.translate(W / 2, H * 0.36); ctx.scale(s, s);
+      ctx.font = `900 ${Math.round(W * 0.16)}px Rubik, system-ui`; ctx.fillStyle = fever ? COL.orange : COL.text; ctx.globalAlpha = 0.9; ctx.fillText(combo, 0, 0);
+      ctx.font = `800 ${Math.round(W * 0.045)}px Rubik, system-ui`; ctx.fillText(fever ? 'ФИВЕР ×2' : 'КОМБО', 0, W * 0.11);
+      ctx.restore(); ctx.globalAlpha = 1;
+    }
+    if (judge) {
+      const k = judge.t / 0.5;
+      ctx.save(); ctx.translate(W / 2, H * 0.55); ctx.scale(1 + (1 - k) * 0.2, 1 + (1 - k) * 0.2); ctx.globalAlpha = Math.min(1, k * 2);
+      ctx.font = `900 ${Math.round(W * 0.09)}px Rubik, system-ui`; ctx.fillStyle = judge.color; ctx.fillText(judge.text, 0, 0); ctx.restore(); ctx.globalAlpha = 1;
+    }
+    // progress
+    const p = Math.max(0, Math.min(1, t / chart.length));
+    ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.fillRect(0, H - 6, W, 6); ctx.fillStyle = song.color; ctx.fillRect(0, H - 6, W * p, 6);
+  }
+  ctx.restore();
+}
+
+function finish() {
+  state = 'over'; clearInterval(schedTimer); G.wake(false);
+  const total = chart.notes.length || 1;
+  const acc = (counts.perfect + counts.great * 0.75 + counts.good * 0.4) / total;
+  const grade = counts.miss === 0 && counts.good === 0 && counts.great === 0 ? 'SS' : acc >= 0.95 ? 'S' : acc >= 0.85 ? 'A' : acc >= 0.7 ? 'B' : acc >= 0.5 ? 'C' : 'D';
+  $('grade').textContent = grade;
+  $('grade').style.color = { SS: COL.yellow, S: COL.yellow, A: COL.lime, B: COL.cyan, C: COL.pink, D: COL.red }[grade];
+  $('overTitle').textContent = `${song.name} · ${['легко', 'норм', 'жёстко'][diff]}`;
+  $('res').innerHTML = [[scoreV.toLocaleString('ru-RU'), 'очки'], [Math.round(acc * 100) + '%', 'точность'], [maxCombo, 'макс. комбо'], [counts.perfect, 'идеально'], [counts.great + counts.good, 'отлично / норм'], [counts.miss, 'мимо']].map(([b, s]) => `<div><b>${b}</b><small>${s}</small></div>`).join('');
+  const r = G.best(`rhythm.${song.id}.${diff}`, scoreV);
+  $('overNote').textContent = r.isNew ? 'Новый рекорд!' : `Рекорд: ${r.best.toLocaleString('ru-RU')}`;
+  $('over').hidden = false;
+  if (grade.startsWith('S') || r.isNew) { G.sfx('win'); fx.emit(W / 2, H * 0.2, { n: 90, color: [COL.yellow, COL.pink, COL.cyan, COL.lime], speed: 700, life: 1.5, size: 7, gravity: 500, shape: 'rect' }); }
+  setTimeout(stopSong, 600);
+  renderSongs();
+}
+
+/* ---------- menu ---------- */
+function renderSongs() {
+  $('songs').innerHTML = SONGS.map((s, i) => {
+    const best = G.get(`best.rhythm.${s.id}.${diff}`, null);
+    return `<button type="button" class="song" data-song="${i}" style="--c:${s.color}" aria-pressed="${s === song}"><b style="color:${s.color}">${s.name}</b><small>${s.desc} · ${s.bpm} BPM</small><span>${best != null ? 'рекорд<br>' + best.toLocaleString('ru-RU') : 'новое'}</span></button>`;
+  }).join('');
+}
+$('songs').addEventListener('click', e => { const b = e.target.closest('[data-song]'); if (!b) return; song = SONGS[+b.dataset.song]; G.set('rhythm.song', +b.dataset.song); G.sfx('tap'); renderSongs(); });
+function syncDiff() { document.querySelectorAll('[data-diff]').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.diff === diff))); }
+document.querySelectorAll('[data-diff]').forEach(b => b.addEventListener('click', () => { diff = +b.dataset.diff; G.set('rhythm.diff', diff); G.sfx('tap'); syncDiff(); renderSongs(); }));
+const lat = $('lat');
+const showLat = () => { $('latOut').textContent = (latency > 0 ? '+' : '') + latency + ' мс'; };
+lat.value = latency; showLat();
+lat.addEventListener('input', () => { latency = +lat.value; G.set('rhythm.lat', latency); showLat(); });
+$('start').addEventListener('click', startSong);
+$('again').addEventListener('click', startSong);
+$('overMenu').addEventListener('click', () => { $('over').hidden = true; $('menu').hidden = false; state = 'menu'; });
+$('restart').addEventListener('click', () => { stopSong(); setTimeout(startSong, 300); });
+$('quit').addEventListener('click', () => { stopSong(); $('pause').hidden = true; $('menu').hidden = false; state = 'menu'; renderSongs(); });
+const pause = () => { if (state !== 'play') return; state = 'paused'; clearInterval(schedTimer); ac && ac.suspend(); $('pause').hidden = false; };
+G.topbar({ pause });
+document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+layout(); renderSongs(); syncDiff();
+})();
+</script>
+</body>
+</html>
