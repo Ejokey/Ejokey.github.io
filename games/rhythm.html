@@ -442,7 +442,7 @@ const now = () => ac ? ac.currentTime - t0 - latency / 1000 : 0;
 
 let source = null, songGen = 0;
 let playMode = G.get('rhythm.play', 'notes');
-const surf = { lane: 1, x: 1 };
+const surf = { x: 1, target: 1, vx: 0, near: 1, drag: null };
 // Surf: the 4 lanes fold into 3, every block still sits on a hit in the music; obstacles fill free lanes.
 function toSurf(notes, diff, seed) {
   const r = rng(seed), map = [0, 1, 1, 2], out = [];
@@ -478,8 +478,8 @@ async function startSong() {
     }
     chart = { ev: [], notes: Beatmap.chart(song.analysis, diff), length: buf.duration, beat: 60 / song.analysis.bpm, buffer: buf };
   } else chart = song.passes ? composeClassic(song, diff) : compose(song, diff);
-  if (playMode === 'surf') { chart.notes = toSurf(chart.notes, diff, (song.trackId || song.seed || 1) + diff); chart.dens = density(chart.notes, chart.length); surf.lane = 1; surf.x = 1; }
-  window.__rhythm = { chart, now };   // for automated checks
+  if (playMode === 'surf') { chart.notes = toSurf(chart.notes, diff, (song.trackId || song.seed || 1) + diff); chart.dens = density(chart.notes, chart.length); Object.assign(surf, { x: 1, target: 1, vx: 0, near: 1, drag: null }); }
+  window.__rhythm = { surf, chart, now };   // for automated checks
   combo = maxCombo = scoreV = 0; counts = { perfect: 0, great: 0, good: 0, miss: 0, crash: 0 }; judge = null; fever = false; evIdx = 0;
   t0 = ac.currentTime + LEAD + 0.3;
   if (source) { try { source.stop(); } catch {} source = null; }
@@ -507,11 +507,15 @@ function stopSong() {
 }
 
 /* ---------- input ---------- */
-function surfMove(d) { const l = Math.max(0, Math.min(2, surf.lane + d)); if (l !== surf.lane) { surf.lane = l; G.buzz(6); } }
+// Surf steering: drag anywhere and the ship follows the finger 1:1 (scaled to lane spacing);
+// let go and it settles into the nearest lane. A short tap still hops one lane.
+const surfClamp = v => Math.max(0, Math.min(2, v));
+function surfMove(d) { surf.target = surfClamp(Math.round(surf.target) + d); }
+function laneSpan() { return surfProj(0).hw * 0.66 * 0.8; }   // px of finger travel per lane, a touch quicker than the road itself
 addEventListener('keydown', e => { if (playMode !== 'surf' || state !== 'play') return; if (e.key === 'ArrowLeft') surfMove(-1); if (e.key === 'ArrowRight') surfMove(1); });
 canvas.addEventListener('pointerdown', e => {
   if (state !== 'play') return;
-  if (playMode === 'surf') { surfMove(e.clientX < W / 2 ? -1 : 1); return; }
+  if (playMode === 'surf') { try { canvas.setPointerCapture(e.pointerId); } catch {} surf.drag = { id: e.pointerId, x0: e.clientX, from: surf.target, moved: false, t0: performance.now() }; return; }
   const lane = Math.max(0, Math.min(3, Math.floor(e.clientX / (W / 4))));
   laneFlash[lane] = 1;
   const t = now();
@@ -542,7 +546,10 @@ G.loop(dt => {
   if (state === 'play') {
     const t = now();
     if (playMode === 'surf') {
-      surf.x += (surf.lane - surf.x) * Math.min(1, dt * 20);
+      // dragging: near-instant follow; released: quick glide into the lane
+      const k = 1 - Math.exp(-dt * (surf.drag && surf.drag.moved ? 38 : 16)), nx = surf.x + (surf.target - surf.x) * k;
+      surf.vx = surf.vx * 0.7 + ((nx - surf.x) / Math.max(dt, 1e-3)) * 0.3; surf.x = nx;
+      const near = Math.round(surf.x); if (near !== surf.near) { surf.near = near; G.buzz(5); }
       for (const n of chart.notes) { if (n.t > t) break; if (!n.hit) surfPass(n); }
       if (Math.random() < 0.6) { const p = surfProj(0), x = p.cx + (surf.x - 1) * p.hw * 0.66; fx.emit(x, p.y + p.hw * 0.12, { n: 1, color: fever ? COL.orange : song.color, speed: 60, life: 0.35, size: 4, gravity: 300, angle: Math.PI / 2, spread: 0.8 }); }
     } else
@@ -555,8 +562,23 @@ G.loop(dt => {
   draw();
 });
 
+canvas.addEventListener('pointermove', e => {
+  const d = surf.drag; if (!d || d.id !== e.pointerId || playMode !== 'surf') return;
+  const dx = e.clientX - d.x0;
+  if (!d.moved && Math.abs(dx) < 6) return;
+  d.moved = true; surf.target = surfClamp(d.from + dx / laneSpan());
+});
+const surfRelease = e => {
+  const d = surf.drag; if (!d || d.id !== e.pointerId) return;
+  surf.drag = null;
+  if (state !== 'play') return;
+  if (!d.moved && performance.now() - d.t0 < 350) surfMove(e.clientX < W / 2 ? -1 : 1);
+  else surf.target = Math.round(surf.target);
+};
+canvas.addEventListener('pointerup', surfRelease);
+canvas.addEventListener('pointercancel', surfRelease);
 function surfPass(n) {
-  const on = surf.lane === n.lane, p = surfProj(0), x = p.cx + (n.lane - 1) * p.hw * 0.66;
+  const off = Math.abs(surf.x - n.lane), on = n.bad ? off < 0.4 : off < 0.55, p = surfProj(0), x = p.cx + (n.lane - 1) * p.hw * 0.66;
   if (n.bad) {
     n.hit = on ? 'crash' : 'dodged';
     if (on) { counts.crash = (counts.crash || 0) + 1; combo = 0; fever = false; scoreV = Math.max(0, scoreV - 500); shake.add(16); G.buzz(70); judge = { text: 'БАХ!', color: COL.red, t: 0.5 }; fx.emit(x, p.y, { n: 26, color: ['#888', COL.red, '#fff'], speed: 420, life: 0.5, size: 6, gravity: 500 }); }
@@ -620,7 +642,7 @@ function drawSurf(t) {
     ctx.globalAlpha = 1;
   }
   // the ship
-  const p = surfProj(0), x = p.cx + (surf.x - 1) * p.hw * 0.66, w = p.hw * 0.34, tilt = (surf.lane - surf.x) * 0.5;
+  const p = surfProj(0), x = p.cx + (surf.x - 1) * p.hw * 0.66, w = p.hw * 0.34, tilt = Math.max(-0.5, Math.min(0.5, surf.vx * 0.06));
   ctx.save(); ctx.translate(x, p.y + w * 0.1); ctx.rotate(tilt);
   const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, w * 1.4); glow.addColorStop(0, fever ? 'rgba(255,140,40,.5)' : 'rgba(255,255,255,.35)'); glow.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(0, 0, w * 1.4, 0, 7); ctx.fill();
@@ -740,7 +762,7 @@ $('songs').addEventListener('click', async e => {
   const b = e.target.closest('[data-song]'); if (!b) return;
   song = allSongs().find(s => s.id === b.dataset.song) || SONGS[0]; G.set('rhythm.songId', song.id); G.sfx('tap'); renderSongs();
 });
-const PLAY_HINT = { notes: 'Жми на дорожку, когда нота долетает до линии.', surf: 'Лети по трассе: тап слева или справа меняет полосу. Собирай цветные блоки, объезжай серые.' };
+const PLAY_HINT = { notes: 'Жми на дорожку, когда нота долетает до линии.', surf: 'Лети по трассе: веди пальцем влево-вправо (или тапай по краям). Собирай цветные блоки, объезжай серые.' };
 function syncPlay() { document.querySelectorAll('[data-play]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.play === playMode))); $('playHint').textContent = PLAY_HINT[playMode]; }
 document.querySelectorAll('[data-play]').forEach(b => b.addEventListener('click', () => { playMode = b.dataset.play; G.set('rhythm.play', playMode); G.sfx('tap'); syncPlay(); renderSongs(); }));
 function syncDiff() { document.querySelectorAll('[data-diff]').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.diff === diff))); }
