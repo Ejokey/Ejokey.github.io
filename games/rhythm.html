@@ -112,6 +112,76 @@ const SONGS = [
   { id: 'turbo', name: 'Турбо', desc: 'Быстрый драм-н-бейс', bpm: 164, root: 50, mode: 'minor', prog: [0, 3, 5, 4], bars: 40, seed: 21, color: COL.cyan, style: 'dnb' },
   { id: 'chill', name: 'Чилл', desc: 'Лоу-фай, расслабиться', bpm: 84, root: 60, mode: 'major', prog: [0, 5, 3, 4], bars: 20, seed: 3, color: COL.lime, style: 'lofi' },
 ];
+// Public-domain classics in our own arrangements. Bars are 16 sixteenths; "B3:2" = note B3 for two 16ths, "r:4" = rest.
+const CLASSICS = [
+  { id: 'grieg', name: 'Горный король', desc: 'Григ · рок, разгоняется', bpm: 138, style: 'rock', color: COL.orange,
+    bars: [
+      ['B3:2 C#4:2 D4:2 E4:2 F#4:2 D4:2 F#4:4', 'Bm'], ['F4:2 C#4:2 F4:4 E4:2 C4:2 E4:4', 'C# C'],
+      ['B3:2 C#4:2 D4:2 E4:2 F#4:2 D4:2 F#4:2 B4:2', 'Bm'], ['A4:2 F#4:2 D4:2 F#4:2 A4:8', 'D']],
+    passes: [[0, 1], [0, 1], [12, 1], [12, 1], [0, 0.5], [0, 0.5], [12, 0.5], [12, 0.5]] },
+  { id: 'mozart', name: 'Турецкий марш', desc: 'Моцарт · синт-рок', bpm: 132, style: 'synth', color: COL.cyan,
+    bars: [
+      ['B3:1 A3:1 G#3:1 A3:1 C4:4 D4:1 C4:1 B3:1 C4:1 E4:4', 'Am'], ['F4:1 E4:1 D#4:1 E4:1 B4:1 A4:1 G#4:1 A4:1 B4:1 A4:1 G#4:1 A4:1 C5:4', 'Am'],
+      ['A4:2 C5:2 B4:2 A4:2 G4:2 A4:2 B4:2 A4:2', 'Am E'], ['G4:2 A4:2 B4:2 A4:2 G4:2 F#4:2 E4:4', 'E Am']],
+    passes: [[0, 1], [0, 1], [12, 1], [0, 1], [12, 1], [0, 1]] },
+  { id: 'elise', name: 'К Элизе', desc: 'Бетховен · лоу-фай', bpm: 78, style: 'lofi', color: COL.pink,
+    bars: [
+      ['E5:1 D#5:1 E5:1 D#5:1 E5:1 B4:1 D5:1 C5:1 A4:4 C4:1 E4:1 A4:2', 'Am'], ['B4:4 E4:1 G#4:1 B4:2 C5:4 E4:2 E5:1 D#5:1', 'E Am'],
+      ['E5:1 D#5:1 E5:1 B4:1 D5:1 C5:1 A4:4 C4:1 E4:1 A4:2 B4:2', 'Am E'], ['r:1 E4:1 C5:1 B4:1 A4:8 r:4', 'Am']],
+    passes: [[0, 1], [0, 1], [0, 1], [0, 1]] },
+  { id: 'ode', name: 'Ода к радости', desc: 'Бетховен · стадион: топ-топ-хлоп', bpm: 104, style: 'stomp', color: COL.yellow,
+    bars: [
+      ['F#4:4 F#4:4 G4:4 A4:4', 'D'], ['A4:4 G4:4 F#4:4 E4:4', 'A'], ['D4:4 D4:4 E4:4 F#4:4', 'D'], ['F#4:6 E4:2 E4:8', 'A'],
+      ['F#4:4 F#4:4 G4:4 A4:4', 'D'], ['A4:4 G4:4 F#4:4 E4:4', 'A'], ['D4:4 D4:4 E4:4 F#4:4', 'D'], ['E4:6 D4:2 D4:8', 'A D'],
+      ['E4:4 E4:4 F#4:4 D4:4', 'A D'], ['E4:4 F#4:2 G4:2 F#4:4 D4:4', 'A D'], ['E4:4 F#4:2 G4:2 F#4:4 E4:4', 'A'], ['D4:4 E4:4 A3:8', 'D A'],
+      ['F#4:4 F#4:4 G4:4 A4:4', 'D'], ['A4:4 G4:4 F#4:4 E4:4', 'A'], ['D4:4 D4:4 E4:4 F#4:4', 'D'], ['E4:6 D4:2 D4:8', 'A D']],
+    passes: [[0, 1], [12, 1]] },
+];
+const NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+const midiOf = n => { const m = n.match(/^([A-G])(#|b)?(-?\d)$/); return 12 * (+m[3] + 1) + NOTE[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0); };
+const chordOf = c => { const m = c.match(/^([A-G])(#|b)?(m)?$/); return { root: NOTE[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0), minor: !!m[3] }; };
+
+function composeClassic(song, diff) {
+  const step = 60 / song.bpm / 4, ev = [];
+  let t = 0;
+  const drums = (t0, s, sc, pass) => {
+    const at = t0 + s * step * sc, st = song.style;
+    if (st === 'rock') { if (s === 0 || s === 8 || (s === 10 && pass % 2)) ev.push({ t: at, kind: 'kick' }); if (s === 4 || s === 12) ev.push({ t: at, kind: 'snare' }); if (s % 2 === 0) ev.push({ t: at, kind: 'hat', v: 0.35 }); }
+    else if (st === 'stomp') { if (s === 0 || s === 2 || s === 8 || s === 10) ev.push({ t: at, kind: 'kick' }); if (s === 4 || s === 12) ev.push({ t: at, kind: 'clap' }); if (pass > 0 && s % 2 === 0) ev.push({ t: at, kind: 'hat', v: 0.3 }); }
+    else if (st === 'synth') { if (s % 4 === 0) ev.push({ t: at, kind: 'kick' }); if (s === 4 || s === 12) ev.push({ t: at, kind: 'snare' }); if (s % 4 === 2) ev.push({ t: at, kind: 'hat', v: 0.5 }); }
+    else { if (s === 0 || s === 7 || s === 10) ev.push({ t: at, kind: 'kick' }); if (s === 4 || s === 12) ev.push({ t: at, kind: 'snare' }); if (s % 2 === 0) ev.push({ t: at + (s % 4 === 2 ? step * 0.3 : 0), kind: 'hat', v: 0.22 }); }
+  };
+  // two bars of drums to count in
+  for (let b = 0; b < 2; b++) { for (let s = 0; s < 16; s++) drums(t, s, 1, 0); t += 16 * step; }
+  const start = t;
+  song.passes.forEach(([tr, sc], pass) => {
+    for (const [mel, chords] of song.bars) {
+      const t0 = t, cs = chords.split(' ').map(chordOf);
+      for (let s = 0; s < 16; s++) {
+        drums(t0, s, sc, pass);
+        const ch = cs[Math.min(cs.length - 1, Math.floor(s / (16 / cs.length)))], root = 36 + ch.root;
+        if (s % 2 === 0) {
+          ev.push({ t: t0 + s * step * sc, kind: 'bass', midi: root, len: step * sc * 1.7 });
+          if (song.style === 'rock' || song.style === 'stomp') ev.push({ t: t0 + s * step * sc, kind: 'gtr', midis: [root + 12, root + 19, root + 24], len: step * sc * (song.style === 'rock' ? 1.6 : 3) });
+        }
+        if (s % (16 / cs.length) === 0 && song.style !== 'rock') ev.push({ t: t0 + s * step * sc, kind: 'pad', midis: [root + 24, root + 24 + (ch.minor ? 3 : 4), root + 31], len: step * sc * 16 / cs.length });
+      }
+      let pos = 0;
+      for (const tok of mel.split(' ')) {
+        const [n, l] = tok.split(':'), len = +l;
+        if (n !== 'r') { const m = midiOf(n) + tr; ev.push({ t: t0 + pos * step * sc, kind: 'lead', midi: m, deg: m, len: step * sc * len * 0.95 }); }
+        pos += len;
+      }
+      t += 16 * step * sc;
+    }
+  });
+  for (let s = 0; s < 16; s += 4) ev.push({ t: t + s * step, kind: s ? 'hat' : 'kick', v: 0.3 });
+  ev.push({ t, kind: 'pad', midis: [57, 61, 64], len: step * 12 });
+  t += 16 * step;
+  ev.sort((a, b) => a.t - b.t);
+  return chartFromLeads(ev, step, diff, start, t - 16 * step, t);
+}
+
 const SCALES = { minor: [0, 2, 3, 5, 7, 8, 10], major: [0, 2, 4, 5, 7, 9, 11] };
 function rng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
 
@@ -165,7 +235,10 @@ function compose(song, diff) {
     }
   }
   ev.sort((a, b) => a.t - b.t);
-  // Chart: lead notes become taps; easy keeps only notes on beats, hard adds kicks as a second lane.
+  return chartFromLeads(ev, step, diff, intro * 16 * step, (song.bars - outro) * 16 * step, song.bars * 16 * step);
+}
+// Chart: lead notes become taps; easy keeps only notes on beats, hard adds snares as an extra lane.
+function chartFromLeads(ev, step, diff, from, to, length) {
   const leads = ev.filter(e => e.kind === 'lead');
   // Lanes follow pitch (higher note = further right) but split by quantiles, so all four lanes get used.
   const degs = leads.map(e => e.deg).sort((a, b) => a - b);
@@ -182,7 +255,7 @@ function compose(song, diff) {
     notes.push({ t: e.t, lane: lane(e.deg) });
   }
   if (diff === 2) {
-    for (const e of ev) if (e.kind === 'snare' && e.t > intro * 16 * step && e.t < (song.bars - outro) * 16 * step) {
+    for (const e of ev) if ((e.kind === 'snare' || e.kind === 'clap') && e.t > from && e.t < to) {
       const used = notes.filter(n => Math.abs(n.t - e.t) < 0.01).map(n => n.lane);
       const free = [0, 3, 1, 2].find(l => !used.includes(l));
       if (free !== undefined && used.length < 2) notes.push({ t: e.t, lane: free });
@@ -195,7 +268,7 @@ function compose(song, diff) {
     if (n.t - last[n.lane] < step * 1.9) { const alt = [0, 1, 2, 3].sort((a, b) => Math.abs(a - n.lane) - Math.abs(b - n.lane)).find(l => n.t - last[l] >= step * 1.9 && !clean.some(c => c.lane === l && Math.abs(c.t - n.t) < 0.01)); if (alt === undefined) continue; n.lane = alt; }
     last[n.lane] = n.t; clean.push({ ...n, hit: null });
   }
-  return { ev, notes: clean, length: song.bars * 16 * step, beat };
+  return { ev, notes: clean, length, beat };
 }
 
 /* ---------- audio engine with look-ahead scheduling ---------- */
@@ -213,8 +286,36 @@ function audio() {
   return ac;
 }
 const hz = m => 440 * Math.pow(2, (m - 69) / 12);
+let drive = null;
+function driveNode() {
+  if (drive && drive.context === ac) return drive;
+  drive = ac.createWaveShaper(); const k = 30, n = 1024, curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const x = i * 2 / n - 1; curve[i] = (1 + k) * x / (1 + k * Math.abs(x)); }
+  drive.curve = curve; drive.oversample = '2x';
+  const post = ac.createBiquadFilter(); post.type = 'lowpass'; post.frequency.value = 3200;
+  const g = ac.createGain(); g.gain.value = 0.22;
+  drive.connect(post); post.connect(g); g.connect(master);
+  return drive;
+}
 function play(e, at, style) {
   const c = ac;
+  if (e.kind === 'gtr') {
+    const out = driveNode();
+    for (const m of e.midis) { const o = c.createOscillator(), g = c.createGain(); o.type = 'sawtooth'; o.frequency.value = hz(m); g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(0.5, at + 0.005); g.gain.exponentialRampToValueAtTime(0.001, at + e.len); o.connect(g); g.connect(out); o.start(at); o.stop(at + e.len + 0.02); }
+    return;
+  }
+  if (e.kind === 'clap') {
+    for (const d of [0, 0.012, 0.024]) { const s2 = c.createBufferSource(); s2.buffer = noiseBuf; const f = c.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1400; f.Q.value = 0.8; const g = c.createGain(); g.gain.setValueAtTime(0.7, at + d); g.gain.exponentialRampToValueAtTime(0.001, at + d + 0.12); s2.connect(f); f.connect(g); g.connect(master); s2.start(at + d, Math.random() * 0.5); s2.stop(at + d + 0.14); }
+    return;
+  }
+  if (e.kind === 'lead' && (style === 'rock' || style === 'stomp')) {
+    const out = driveNode(), o = c.createOscillator(), o2 = c.createOscillator(), g = c.createGain();
+    o.type = 'sawtooth'; o2.type = 'square'; o.frequency.value = hz(e.midi + 12); o2.frequency.value = hz(e.midi + 12); o2.detune.value = 7;
+    const vib = c.createOscillator(), vg = c.createGain(); vib.frequency.value = 5.5; vg.gain.value = 6; vib.connect(vg); vg.connect(o.detune); vib.start(at); vib.stop(at + e.len + 0.05);
+    g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(0.9, at + 0.01); g.gain.setValueAtTime(0.9, at + e.len * 0.8); g.gain.exponentialRampToValueAtTime(0.001, at + e.len + 0.04);
+    o.connect(g); o2.connect(g); g.connect(out); o.start(at); o2.start(at); o.stop(at + e.len + 0.06); o2.stop(at + e.len + 0.06);
+    return;
+  }
   if (e.kind === 'kick') {
     const o = c.createOscillator(), g = c.createGain();
     o.frequency.setValueAtTime(style === 'lofi' ? 120 : 150, at); o.frequency.exponentialRampToValueAtTime(42, at + 0.12);
@@ -277,7 +378,7 @@ async function loadUserTracks() {
   if (saved) song = allSongs().find(s => s.id === saved) || song;
   renderSongs();
 }
-const allSongs = () => [...SONGS, ...userTracks];
+const allSongs = () => [...CLASSICS, ...SONGS, ...userTracks];
 
 async function addTrack(file) {
   if (!file) return;
@@ -306,7 +407,7 @@ async function addTrack(file) {
 $('file').addEventListener('change', e => addTrack(e.target.files[0]));
 
 /* ---------- game state ---------- */
-let song = SONGS.find(s => s.id === G.get('rhythm.songId', 'neon')) || SONGS[0], diff = G.get('rhythm.diff', 1), latency = G.get('rhythm.lat', 0);
+let song = [...CLASSICS, ...SONGS].find(s => s.id === G.get('rhythm.songId', 'grieg')) || CLASSICS[0], diff = G.get('rhythm.diff', 1), latency = G.get('rhythm.lat', 0);
 let chart = null, t0 = 0, evIdx = 0, state = 'menu', schedTimer = 0;
 let combo = 0, maxCombo = 0, scoreV = 0, counts = { perfect: 0, great: 0, good: 0, miss: 0 }, judge = null, fever = false;
 const laneFlash = [0, 0, 0, 0];
@@ -354,7 +455,7 @@ async function startSong() {
       $('busy').hidden = true;
     }
     chart = { ev: [], notes: Beatmap.chart(song.analysis, diff), length: buf.duration, beat: 60 / song.analysis.bpm, buffer: buf };
-  } else chart = compose(song, diff);
+  } else chart = song.passes ? composeClassic(song, diff) : compose(song, diff);
   if (playMode === 'surf') { chart.notes = toSurf(chart.notes, diff, (song.trackId || song.seed || 1) + diff); chart.dens = density(chart.notes, chart.length); surf.lane = 1; surf.x = 1; }
   window.__rhythm = { chart, now };   // for automated checks
   combo = maxCombo = scoreV = 0; counts = { perfect: 0, great: 0, good: 0, miss: 0, crash: 0 }; judge = null; fever = false; evIdx = 0;
@@ -589,7 +690,7 @@ function renderSongs() {
   $('songs').innerHTML = allSongs().map(s => {
     const best = G.get(`best.rhythm.${s.id}.${diff}${playMode === 'surf' ? '.surf' : ''}`, null);
     const del = s.custom ? `<button type="button" class="del" data-del="${s.trackId}" aria-label="Удалить трек">×</button>` : '';
-    return `<div style="position:relative"><button type="button" class="song" data-song="${s.id}" style="--c:${s.color}" aria-pressed="${s === song}"><b style="color:${s.color}">${escH(s.name)}</b><small>${s.desc} · ${s.bpm} BPM</small><span>${best != null ? 'рекорд<br>' + best.toLocaleString('ru-RU') : 'новое'}</span></button>${del}</div>`;
+    return `<div style="position:relative"><button type="button" class="song" data-song="${s.id}" style="--c:${s.color}" aria-pressed="${s === song}"><b style="color:${s.color}">${escH(s.name)}</b><small>${s.desc}${s.passes ? '' : ' · ' + s.bpm + ' BPM'}</small><span>${best != null ? 'рекорд<br>' + best.toLocaleString('ru-RU') : 'новое'}</span></button>${del}</div>`;
   }).join('');
 }
 $('songs').addEventListener('click', async e => {
