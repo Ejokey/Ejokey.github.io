@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#140f24">
+<title>Угадайка — Игротека</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="common.css">
+<style>
+  html, body { overflow: hidden; }
+  .stage { position: fixed; inset: 0; display: grid; }
+  .solo { grid-template-rows: auto 1fr auto; padding: calc(70px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); max-width: 520px; margin: 0 auto; }
+  .bar { height: 10px; border-radius: 999px; background: var(--ink-2); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 100%; background: var(--lime); transform-origin: left; }
+  .meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px; font-weight: 800; color: var(--muted); }
+  .meta b { color: var(--text); font-size: 22px; font-variant-numeric: tabular-nums; }
+  .clue { display: grid; place-items: center; text-align: center; gap: 10px; min-height: 0; }
+  .emoji { font-size: clamp(56px, 18vw, 96px); line-height: 1.15; letter-spacing: 0.06em; }
+  .emoji.pop { animation: emo 420ms var(--ease); }
+  @keyframes emo { from { transform: scale(0.4) rotate(-8deg); opacity: 0; } }
+  .cat { padding: 4px 12px; border-radius: 999px; background: var(--ink-2); color: var(--muted); font-weight: 800; font-size: 14px; }
+  .opts { display: grid; gap: 10px; }
+  .opt {
+    min-height: 60px; padding: 8px 16px; border: 0; border-radius: 16px; text-align: left;
+    background: var(--ink-2); color: var(--text); font-weight: 800; font-size: 18px; line-height: 1.2;
+    box-shadow: 0 4px 0 oklch(0.12 0.04 290); transition: transform 80ms, background-color 150ms;
+  }
+  .opt:active { transform: translateY(3px); box-shadow: 0 1px 0 oklch(0.12 0.04 290); }
+  .opt.ok { background: var(--lime); color: var(--on-color); }
+  .opt.bad { background: var(--red); color: white; animation: no 300ms; }
+  .opt.dim { opacity: 0.4; }
+  @keyframes no { 25%, 75% { transform: translateX(-6px); } 50% { transform: translateX(6px); } }
+  .hintbtn { margin-top: 10px; justify-self: center; }
+  /* duel: two halves, the top one is turned to face the other player */
+  .duel { grid-template-rows: 1fr 1fr; }
+  .half { display: grid; grid-template-rows: 1fr auto auto; gap: 10px; padding: 46px 14px 14px; position: relative; }
+  .half.top { transform: rotate(180deg); }
+  .half .emoji { font-size: clamp(40px, 12vw, 64px); }
+  .half .opts { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .half .opt { min-height: 54px; font-size: 15px; text-align: center; }
+  .half .score { font-weight: 900; font-size: 20px; display: flex; justify-content: space-between; }
+  .half.p0 { background: color-mix(in oklch, var(--pink) 10%, var(--ink)); }
+  .half.p1 { background: color-mix(in oklch, var(--cyan) 10%, var(--ink)); }
+  .half.locked .opts { opacity: 0.35; pointer-events: none; }
+  .is-duel .topbar { inset: 50% 0 auto 0; transform: translateY(-50%); padding: 0 12px; }
+  .cats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .cats button { min-height: 52px; border: 3px solid transparent; border-radius: 14px; background: var(--ink-2); color: var(--text); font-weight: 800; font-size: 16px; }
+  .cats button[aria-pressed="true"] { border-color: var(--yellow); background: color-mix(in oklch, var(--yellow) 14%, var(--ink-2)); }
+</style>
+</head>
+<body>
+<div class="stage solo" id="solo" hidden>
+  <div><div class="bar"><i id="timer"></i></div><div class="meta"><span>Вопрос <b id="qn">1</b>/10</span><span>Очки <b id="pts">0</b></span></div></div>
+  <div class="clue"><span class="cat" id="cat"></span><div class="emoji" id="emo"></div><button class="btn ghost hintbtn" type="button" id="hint">50 / 50</button></div>
+  <div class="opts" id="opts"></div>
+</div>
+<div class="stage duel" id="duel" hidden></div>
+
+<div class="overlay" id="menu">
+  <div class="panel">
+    <h1>Угадайка</h1>
+    <p>Угадай фильм, мультфильм, игру или сериал по эмодзи.</p>
+    <div class="cats" id="cats"></div>
+    <div class="choices">
+      <button class="btn" type="button" id="goSolo">Играть одному</button>
+      <button class="btn pink" type="button" id="goDuel">Дуэль вдвоём</button>
+    </div>
+    <p id="duelHint" style="font-size:15px">В дуэли телефон лежит между вами: кто первым нажмёт правильный ответ, тот получает очко.</p>
+  </div>
+</div>
+
+<div class="overlay" id="over" hidden>
+  <div class="panel">
+    <h1 id="overTitle"></h1>
+    <div class="big" id="overScore"></div>
+    <p id="overNote"></p>
+    <div class="choices">
+      <button class="btn" type="button" id="again">Ещё раз</button>
+      <button class="btn ghost" type="button" id="overMenu">Меню</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+// Each line: emoji | answer. Wrong options are drawn from the same category.
+const DATA = {
+  films: { name: 'Фильмы', items: `
+🚢🧊💔|Титаник
+🦖🏝️🧬|Парк юрского периода
+💊🕶️🐇|Матрица
+⏰🚗⚡|Назад в будущее
+🤖🔫⏳|Терминатор
+🧙‍♂️💍🌋|Властелин колец
+⚡👓🧙|Гарри Поттер
+🦈🏖️🩸|Челюсти
+👽☎️🏠|Инопланетянин
+🦇🃏🌃|Тёмный рыцарь
+🚀🌽⏳|Интерстеллар
+🧠🌀💤|Начало
+🏴‍☠️🦜⚓|Пираты Карибского моря
+👻🚫🔫|Охотники за привидениями
+🏃‍♂️🍫🪶|Форрест Гамп
+🌌⚔️🤖|Звёздные войны
+🏠🎄👦🪤|Один дома
+🥊🐯🏃|Рокки
+🦍🏙️🗼|Кинг-Конг
+🛁🎄✈️|Ирония судьбы
+⏳👑🏙️|Иван Васильевич меняет профессию
+🎧🔫🏙️|Брат
+🏔️👰🚗|Кавказская пленница
+💎🦾🐟|Бриллиантовая рука
+🐀🌧️🔪|Паразиты
+💙👽🌳|Аватар
+🧊🚂❄️|Сквозь снег
+🤡🎈🛶|Оно` },
+  cartoons: { name: 'Мультфильмы', items: `
+🦁👑🌅|Король Лев
+❄️👸⛄|Холодное сердце
+🐠🔍🌊|В поисках Немо
+🤠🧸🚀|История игрушек
+👹💚🏰|Шрек
+🐼🥋🥟|Кунг-фу панда
+🐀👨‍🍳🍲|Рататуй
+🏠🎈👴|Вверх
+🤖🌱🌍|ВАЛЛ-И
+🧞🪔🐒|Аладдин
+🧜‍♀️🐠🔱|Русалочка
+🐻🍯🎈|Винни-Пух
+🐺🐰🥚|Ну, погоди!
+🐵👂🍊|Чебурашка
+🐱🐶🐮🏡|Трое из Простоквашино
+👧🐻🍓|Маша и Медведь
+🚗⚡🏁|Тачки
+💀🎸🌼|Тайна Коко
+🦸‍♂️👨‍👩‍👧‍👦🔥|Суперсемейка
+😀😢😡|Головоломка
+🐉🏝️👦|Как приручить дракона
+🍌💛👓|Миньоны
+🐭🧀🐱|Том и Джерри
+🦙👑🏰|Похождения императора
+🐘🐁🌸|Хортон
+🦊🐰🚓|Зверополис` },
+  games: { name: 'Игры', items: `
+🍄👨‍🔧👸|Супер Марио
+🧱⬇️🟦|Тетрис
+🟡👻🍒|Пакман
+⛏️🟫🧟|Майнкрафт
+🐦😠🐷|Angry Birds
+🔫🚗🌴|GTA
+🐉🏔️⚔️|Скайрим
+🦔💨💍|Соник
+🔪📮👨‍🚀|Among Us
+🪂🏗️🔫|Fortnite
+🧟🌻🧠|Растения против зомби
+🍬🍭💥|Candy Crush
+🏃‍♂️🚇🛹|Subway Surfers
+🐍🍎🟩|Змейка
+🗡️🛡️🧝|Зельда
+💣💣🧱|Бомбермен
+🃏♠️🤡|Balatro
+👾🛸🔫|Space Invaders
+👑🏰⚔️|Clash Royale
+🪓🧔⚡|God of War
+🚗💥🏁|Need for Speed
+🐤🚗🛣️|Crossy Road
+🔫💣🏳️|Counter-Strike
+🧱🎮🧑|Roblox` },
+  series: { name: 'Сериалы', items: `
+🐉👑❄️|Игра престолов
+⚗️👨‍🏫💵|Во все тяжкие
+🧇👧🔦|Очень странные дела
+☕🛋️👫|Друзья
+🦑🎲💰|Игра в кальмара
+🧟🏚️🔫|Ходячие мертвецы
+🎭💸🏦|Бумажный дом
+🕵️🎻🔍|Шерлок
+⚔️🐺🧔|Ведьмак
+🍩👨‍👩‍👧‍👦💛|Симпсоны
+🧒🧪🛸|Рик и Морти
+🖤👧🖐️|Уэнсдэй
+🩺🦯💊|Доктор Хаус
+🍳👨‍🍳🍽️|Кухня
+🎓🏠😂|Универ
+🧥🩸🏘️|Слово пацана
+👑🇬🇧💍|Корона
+📄🏢😂|Офис
+🤵‍♂️🍸🎩|Острые козырьки
+🧬👽🔬|Секретные материалы
+🚀🖖🌌|Звёздный путь
+🏝️✈️🔢|Остаться в живых
+🎤👸🎵|Голос` },
+};
+for (const k in DATA) DATA[k].items = DATA[k].items.trim().split('\n').map(l => { const [e, a] = l.split('|'); return { e: e.trim(), a: a.trim(), cat: k }; });
+
+let cats = new Set(G.get('emoji.cats', ['films', 'cartoons', 'games', 'series']));
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const pool = () => [...cats].flatMap(c => DATA[c].items);
+function makeRound(q) {
+  const same = DATA[q.cat].items.filter(x => x.a !== q.a);
+  return { q, opts: shuffle([q.a, ...shuffle(same.slice()).slice(0, 3).map(x => x.a)]) };
+}
+// Questions you saw recently come back later rather than sooner.
+function pickQuestions(n) {
+  const seen = G.get('emoji.seen', []);
+  const all = shuffle(pool().slice()).sort((a, b) => (seen.includes(a.e) ? 1 : 0) - (seen.includes(b.e) ? 1 : 0));
+  const out = all.slice(0, n);
+  G.set('emoji.seen', [...out.map(x => x.e), ...seen].slice(0, 60));
+  return out.map(makeRound);
+}
+
+/* ---------- menu ---------- */
+function renderCats() {
+  $('cats').innerHTML = Object.entries(DATA).map(([k, v]) => `<button type="button" data-cat="${k}" aria-pressed="${cats.has(k)}">${v.name} · ${v.items.length}</button>`).join('');
+}
+$('cats').addEventListener('click', e => {
+  const b = e.target.closest('[data-cat]'); if (!b) return;
+  const k = b.dataset.cat;
+  if (cats.has(k) && cats.size === 1) { G.toast('Нужна хотя бы одна категория'); return; }
+  cats.has(k) ? cats.delete(k) : cats.add(k); G.set('emoji.cats', [...cats]); G.sfx('tap'); renderCats();
+});
+
+/* ---------- solo ---------- */
+const QTIME = 15;
+let rounds = [], qi = 0, pts = 0, streak = 0, tLeft = 0, answered = false, hintUsed = false, mode = 'solo', timerId = 0, correct = 0;
+function startSolo() {
+  document.body.classList.remove('is-duel');
+  mode = 'solo'; rounds = pickQuestions(10); qi = 0; pts = 0; streak = 0; correct = 0; hintUsed = false;
+  $('menu').hidden = $('over').hidden = true; $('duel').hidden = true; $('solo').hidden = false;
+  $('pts').textContent = 0; $('hint').disabled = false;
+  showQ();
+}
+function showQ() {
+  const { q, opts } = rounds[qi];
+  answered = false; tLeft = QTIME;
+  $('qn').textContent = qi + 1; $('cat').textContent = DATA[q.cat].name;
+  const emo = $('emo'); emo.textContent = q.e; emo.classList.remove('pop'); void emo.offsetWidth; emo.classList.add('pop');
+  $('opts').innerHTML = opts.map(o => `<button type="button" class="opt" data-a="${o.replace(/"/g, '&quot;')}">${o}</button>`).join('');
+  G.sfx('flip', 2);
+  clearInterval(timerId);
+  const t0 = performance.now();
+  timerId = setInterval(() => {
+    tLeft = QTIME - (performance.now() - t0) / 1000;
+    const k = Math.max(0, tLeft / QTIME), bar = $('timer');
+    bar.style.transform = `scaleX(${k})`; bar.style.background = k < 0.3 ? 'var(--red)' : k < 0.6 ? 'var(--yellow)' : 'var(--lime)';
+    if (tLeft <= 0) answer(null);
+  }, 50);
+}
+function answer(btn) {
+  if (answered) return; answered = true; clearInterval(timerId);
+  const { q } = rounds[qi];
+  const ok = btn && btn.dataset.a === q.a;
+  document.querySelectorAll('#opts .opt').forEach(b => { if (b.dataset.a === q.a) b.classList.add('ok'); else if (b === btn) b.classList.add('bad'); else b.classList.add('dim'); });
+  if (ok) {
+    streak++; correct++;
+    const gain = Math.round(100 + 100 * Math.max(0, tLeft) / QTIME) * (streak >= 3 ? 2 : 1);
+    pts += gain; $('pts').textContent = pts;
+    G.sfx('coin'); G.buzz(15); G.toast(streak >= 3 ? `+${gain} · серия ×2` : `+${gain}`);
+  } else { streak = 0; G.sfx('error'); G.buzz([30, 40, 30]); if (!btn) G.toast('Время вышло'); }
+  setTimeout(() => { qi++; if (qi < rounds.length) showQ(); else endSolo(); }, ok ? 900 : 1600);
+}
+$('opts').addEventListener('click', e => { const b = e.target.closest('.opt'); if (b) answer(b); });
+$('hint').addEventListener('click', () => {
+  if (hintUsed || answered) return; hintUsed = true; $('hint').disabled = true;
+  const { q } = rounds[qi];
+  shuffle([...document.querySelectorAll('#opts .opt')].filter(b => b.dataset.a !== q.a)).slice(0, 2).forEach(b => { b.classList.add('dim'); b.disabled = true; });
+  G.sfx('tap');
+});
+function endSolo() {
+  const r = G.best('emoji', pts);
+  $('overTitle').textContent = correct >= 9 ? 'Киноман!' : correct >= 6 ? 'Отлично!' : correct >= 3 ? 'Неплохо' : 'В следующий раз';
+  $('overScore').textContent = pts;
+  $('overNote').textContent = `Угадано ${correct} из 10. ` + (r.isNew ? 'Новый рекорд!' : `Рекорд: ${r.best}`);
+  $('over').hidden = false; G.sfx(correct >= 6 ? 'win' : 'lose');
+}
+
+/* ---------- duel ---------- */
+let dScore = [0, 0], dLocked = [false, false], dRound = 0, dRounds = [];
+const DUEL_N = 10;
+function startDuel() {
+  mode = 'duel'; dScore = [0, 0]; dRound = 0; dRounds = pickQuestions(DUEL_N);
+  $('menu').hidden = $('over').hidden = true; $('solo').hidden = true; $('duel').hidden = false;
+  document.body.classList.add('is-duel');
+  showDuel();
+}
+function showDuel() {
+  dLocked = [false, false];
+  const { q, opts } = dRounds[dRound];
+  const half = i => `<div class="half ${i ? 'top p1' : 'p0'}" data-p="${i}">
+      <div class="clue"><span class="cat">${DATA[q.cat].name}</span><div class="emoji pop">${q.e}</div></div>
+      <div class="opts">${opts.map(o => `<button type="button" class="opt" data-a="${o.replace(/"/g, '&quot;')}">${o}</button>`).join('')}</div>
+      <div class="score"><span style="color:var(--${i ? 'cyan' : 'pink'})">${i ? 'Голубой' : 'Розовый'}: ${dScore[i]}</span><span>${dRound + 1}/${DUEL_N}</span></div></div>`;
+  $('duel').innerHTML = half(1) + half(0);
+  G.sfx('flip', 2);
+}
+$('duel').addEventListener('pointerdown', e => {
+  const b = e.target.closest('.opt'); if (!b) return;
+  const h = b.closest('.half'), p = +h.dataset.p;
+  if (dLocked[p] || dLocked.every(Boolean) || $('duel').dataset.busy) return;
+  const { q } = dRounds[dRound];
+  if (b.dataset.a === q.a) {
+    dScore[p]++; $('duel').dataset.busy = '1';
+    document.querySelectorAll('#duel .opt').forEach(x => { if (x.dataset.a === q.a) x.classList.add('ok'); else x.classList.add('dim'); });
+    G.sfx('coin'); G.buzz(25);
+    setTimeout(nextDuel, 1300);
+  } else {
+    b.classList.add('bad'); dLocked[p] = true; h.classList.add('locked'); G.sfx('error'); G.buzz([20, 30, 20]);
+    if (dLocked.every(Boolean)) { $('duel').dataset.busy = '1'; document.querySelectorAll('#duel .opt').forEach(x => { if (x.dataset.a === q.a) x.classList.add('ok'); }); setTimeout(nextDuel, 1500); }
+  }
+});
+function nextDuel() {
+  delete $('duel').dataset.busy;
+  dRound++;
+  if (dRound < DUEL_N) return showDuel();
+  const w = dScore[0] === dScore[1] ? -1 : dScore[0] > dScore[1] ? 0 : 1;
+  $('overTitle').textContent = w < 0 ? 'Ничья!' : w ? 'Победил голубой' : 'Победил розовый';
+  $('overTitle').style.color = w < 0 ? '' : w ? 'var(--cyan)' : 'var(--pink)';
+  $('overScore').textContent = `${dScore[0]} : ${dScore[1]}`;
+  $('overNote').textContent = '';
+  $('over').hidden = false; G.sfx('win');
+}
+
+$('goSolo').addEventListener('click', startSolo);
+$('goDuel').addEventListener('click', startDuel);
+$('again').addEventListener('click', () => mode === 'duel' ? startDuel() : startSolo());
+$('overMenu').addEventListener('click', () => { document.body.classList.remove('is-duel'); $('over').hidden = true; $('solo').hidden = $('duel').hidden = true; $('menu').hidden = false; $('overTitle').style.color = ''; clearInterval(timerId); });
+G.topbar();
+renderCats();
+})();
+</script>
+</body>
+</html>

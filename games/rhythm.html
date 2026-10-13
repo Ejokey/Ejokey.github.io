@@ -136,6 +136,25 @@ const CLASSICS = [
       ['E4:4 E4:4 F#4:4 D4:4', 'A D'], ['E4:4 F#4:2 G4:2 F#4:4 D4:4', 'A D'], ['E4:4 F#4:2 G4:2 F#4:4 E4:4', 'A'], ['D4:4 E4:4 A3:8', 'D A'],
       ['F#4:4 F#4:4 G4:4 A4:4', 'D'], ['A4:4 G4:4 F#4:4 E4:4', 'A'], ['D4:4 D4:4 E4:4 F#4:4', 'D'], ['E4:6 D4:2 D4:8', 'A D']],
     passes: [[0, 1], [12, 1]] },
+  { id: 'bee', name: 'Полёт шмеля', desc: 'Римский-Корсаков · драм-н-бейс, хардкор', bpm: 150, style: 'dnb', color: COL.lime,
+    bars: [
+      ['E5:1 D#5:1 D5:1 C#5:1 D5:1 C#5:1 C5:1 B4:1 C5:1 B4:1 A#4:1 A4:1 G#4:1 G4:1 F#4:1 F4:1', 'Am E'],
+      ['E4:1 F4:1 E4:1 D#4:1 E4:1 F4:1 F#4:1 G4:1 G#4:1 A4:1 A#4:1 B4:1 C5:1 C#5:1 D5:1 D#5:1', 'Am E'],
+      ['E5:1 D#5:1 D5:1 C#5:1 D5:1 C#5:1 C5:1 B4:1 C5:1 B4:1 A#4:1 A4:1 G#4:1 G4:1 F#4:1 F4:1', 'Am E'],
+      ['E4:1 F4:1 F#4:1 G4:1 G#4:1 A4:1 A#4:1 B4:1 C5:1 B4:1 A#4:1 A4:1 G#4:4', 'E']],
+    passes: [[0, 1], [0, 1], [-12, 1], [0, 1], [0, 1], [-12, 1], [0, 1]] },
+  { id: 'bach', name: 'Токката ре минор', desc: 'Бах · органный метал', bpm: 104, style: 'rock', color: COL.red,
+    bars: [
+      ['A4:2 G4:2 A4:8 r:4', 'Dm'], ['G4:1 F4:1 E4:1 D4:1 C#4:4 D4:8', 'A Dm'],
+      ['A3:2 G3:2 A3:8 r:4', 'Dm'], ['G3:1 F3:1 E3:1 D3:1 C#3:4 D3:8', 'A Dm'],
+      ['D4:1 E4:1 F4:1 G4:1 A4:1 A#4:1 C#5:1 D5:1 E5:1 F5:1 G5:1 A5:1 D5:4', 'Dm'],
+      ['A5:1 G5:1 F5:1 E5:1 D5:1 C#5:1 A#4:1 A4:1 G4:1 F4:1 E4:1 D4:1 C#4:4', 'A']],
+    passes: [[0, 1], [0, 1], [0, 0.5], [0, 0.5], [0, 0.5]] },
+  { id: 'spring', name: 'Весна', desc: 'Вивальди · дэнс', bpm: 124, style: 'synth', color: COL.cyan,
+    bars: [
+      ['E4:2 G#4:2 G#4:2 G#4:2 F#4:1 E4:1 B4:6', 'E'], ['B4:2 A4:1 G#4:1 G#4:2 G#4:2 F#4:1 E4:1 B4:6', 'E B'],
+      ['B4:2 A4:1 G#4:1 A4:2 B4:2 A4:4 F#4:4', 'E B'], ['B4:2 A4:1 G#4:1 A4:2 B4:2 A4:2 G#4:2 F#4:4', 'B E']],
+    passes: [[0, 1], [0, 1], [12, 1], [12, 1], [0, 1]] },
 ];
 const NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 const midiOf = n => { const m = n.match(/^([A-G])(#|b)?(-?\d)$/); return 12 * (+m[3] + 1) + NOTE[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0); };
@@ -148,6 +167,7 @@ function composeClassic(song, diff) {
     const at = t0 + s * step * sc, st = song.style;
     if (st === 'rock') { if (s === 0 || s === 8 || (s === 10 && pass % 2)) ev.push({ t: at, kind: 'kick' }); if (s === 4 || s === 12) ev.push({ t: at, kind: 'snare' }); if (s % 2 === 0) ev.push({ t: at, kind: 'hat', v: 0.35 }); }
     else if (st === 'stomp') { if (s === 0 || s === 2 || s === 8 || s === 10) ev.push({ t: at, kind: 'kick' }); if (s === 4 || s === 12) ev.push({ t: at, kind: 'clap' }); if (pass > 0 && s % 2 === 0) ev.push({ t: at, kind: 'hat', v: 0.3 }); }
+    else if (st === 'dnb') { if (s === 0 || s === 10) ev.push({ t: at, kind: 'kick' }); if (s === 4 || s === 12) ev.push({ t: at, kind: 'snare' }); if (s % 2 === 0 || pass % 2) ev.push({ t: at, kind: 'hat', v: s % 4 === 2 ? 0.55 : 0.3 }); }
     else if (st === 'synth') { if (s % 4 === 0) ev.push({ t: at, kind: 'kick' }); if (s === 4 || s === 12) ev.push({ t: at, kind: 'snare' }); if (s % 4 === 2) ev.push({ t: at, kind: 'hat', v: 0.5 }); }
     else { if (s === 0 || s === 7 || s === 10) ev.push({ t: at, kind: 'kick' }); if (s === 4 || s === 12) ev.push({ t: at, kind: 'snare' }); if (s % 2 === 0) ev.push({ t: at + (s % 4 === 2 ? step * 0.3 : 0), kind: 'hat', v: 0.22 }); }
   };

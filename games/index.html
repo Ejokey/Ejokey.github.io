@@ -80,6 +80,11 @@
       <b>Баскетбол</b><small>Флик-броски на время, «в огне» ×2</small>
       <span class="meta"><span class="tag">соло · до 4</span><span class="rec" data-rec="basket"></span></span>
     </a>
+    <a class="game" href="emoji.html" style="--c: var(--lime)">
+      <svg viewBox="0 0 80 80" aria-hidden="true"><rect x="6" y="14" width="68" height="52" rx="14" fill="rgba(255,255,255,.3)"/><text x="40" y="50" font-size="26" text-anchor="middle">🎬🤔</text></svg>
+      <b>Угадайка</b><small>Фильмы, мультики, игры и сериалы по эмодзи</small>
+      <span class="meta"><span class="tag">соло · дуэль</span><span class="rec" data-rec="emoji"></span></span>
+    </a>
     <a class="game" href="words.html" style="--c: var(--yellow)">
       <svg viewBox="0 0 80 80" aria-hidden="true"><g font-family="Rubik,system-ui" font-weight="900" font-size="15" text-anchor="middle"><rect x="4" y="26" width="22" height="26" rx="5" fill="#7ee36b"/><text x="15" y="45" fill="#1b1530">С</text><rect x="29" y="26" width="22" height="26" rx="5" fill="#fff"/><text x="40" y="45" fill="#1b1530">Л</text><rect x="54" y="26" width="22" height="26" rx="5" fill="#1b1530"/><text x="65" y="45" fill="#fff">О</text></g></svg>
       <b>Слово дня</b><small>Угадай слово из 5 букв, можно дуэлью</small>
@@ -100,8 +105,9 @@
   const recs = {
     hockey: () => { const n = ['easy', 'normal', 'hard'].reduce((a, l) => a + G.get('hockey.wins.' + l, 0), 0); return n ? `Побед над ботом: ${n}` : ''; },
     penalty: () => { const n = G.get('penalty.wins', 0); return n ? `Побед над ботом: ${n}` : ''; },
-    rhythm: () => { const ids = ['grieg', 'mozart', 'elise', 'ode', 'neon', 'turbo', 'chill']; let best = 0; ids.forEach(i => [0, 1, 2].forEach(d => ['', '.surf'].forEach(m => { best = Math.max(best, G.get(`best.rhythm.${i}.${d}${m}`, 0) || 0); }))); return best ? `Рекорд: ${best.toLocaleString('ru-RU')}` : ''; },
+    rhythm: () => { const ids = ['grieg', 'mozart', 'elise', 'ode', 'bee', 'bach', 'spring', 'neon', 'turbo', 'chill']; let best = 0; ids.forEach(i => [0, 1, 2].forEach(d => ['', '.surf'].forEach(m => { best = Math.max(best, G.get(`best.rhythm.${i}.${d}${m}`, 0) || 0); }))); return best ? `Рекорд: ${best.toLocaleString('ru-RU')}` : ''; },
     basket: () => { const b = G.get('best.basket', 0); return b ? `Рекорд: ${b}` : ''; },
+    emoji: () => { const b = G.get('best.emoji', 0); return b ? `Рекорд: ${b}` : ''; },
     words: () => { const s = G.get('words.stats', null); return s && s.played ? `Серия: ${s.streak} · побед ${Math.round(s.wins / s.played * 100)}%` : ''; },
   };
   document.querySelectorAll('[data-rec]').forEach(el => { el.textContent = recs[el.dataset.rec](); });
