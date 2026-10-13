@@ -191,7 +191,23 @@
     return bar;
   };
 
+  G.VERSION = 11;   // keep equal to the number in sw.js CACHE ('igra-v11'); shown on the hub
+
+  // Updates: Android often resumes the app from memory instead of reloading it, so ask for a new
+  // version on every open and every return to the app. When a new one takes over, the hub reloads
+  // itself; inside a game we only say so, to never break a round.
   if ('serviceWorker' in navigator && window.isSecureContext && window.top === window.self) {
-    addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+    const hadController = !!navigator.serviceWorker.controller;
+    let reg = null, reloaded = false;
+    const check = () => { if (reg && navigator.onLine) reg.update().catch(() => {}); };
+    addEventListener('load', () => navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then(r => { reg = r; check(); }).catch(() => {}));
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloaded) return;   // first install: the page is already current
+      reloaded = true;
+      if (document.body.dataset.hub !== undefined) location.reload();
+      else G.toast('Вышло обновление — вернись в меню, оно подтянется');
+    });
   }
 })();

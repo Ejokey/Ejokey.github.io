@@ -47,7 +47,7 @@
   .game:nth-child(even) svg { animation: wob 3.6s ease-in-out infinite reverse; }
 </style>
 </head>
-<body>
+<body data-hub>
 <main>
   <header>
     <img class="logo" src="icon.svg" alt="">
@@ -102,6 +102,7 @@
     <button class="pill" type="button" id="vib"></button>
     <button class="pill" type="button" id="install" hidden>Установить на телефон</button>
     <p>Работает без интернета. Чтобы добавить на рабочий стол: меню ⋮ → «Добавить на главный экран».</p>
+    <p class="ver" id="ver"></p>
   </footer>
 </main>
 <script src="common.js"></script>
@@ -122,6 +123,7 @@
   snd.addEventListener('click', () => { G.toggleSound(); sync(); G.sfx('tap'); });
   vib.addEventListener('click', () => { G.haptics = !G.haptics; G.set('haptics', G.haptics); sync(); G.buzz(30); });
   sync();
+  document.getElementById('ver').textContent = `Версия ${G.VERSION}`;
   document.querySelectorAll('.game').forEach(a => a.addEventListener('pointerdown', () => { G.sfx('tap'); G.buzz(8); }));
   let deferred = null;
   addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e; document.getElementById('install').hidden = false; });

@@ -1,7 +1,7 @@
 // Offline cache for Игротека.
 // Online: pages and scripts come fresh from the network (so an update shows up on the next open),
 // with a short timeout so a bad connection falls back to the cache. Offline (plane): straight from the cache.
-const CACHE = 'igra-v10';
+const CACHE = 'igra-v11';
 const ASSETS = ['./', './index.html', './common.css', './common.js', './hockey.html', './penalty.html', './basket.html', './rhythm.html', './words.html', './emoji.html', './geo.html', './geo.json', './words5.json', './beatmap.js',
   './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png',
   './fonts/rubik-cyr.woff2', './fonts/rubik-lat.woff2'];
