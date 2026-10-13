@@ -19,6 +19,16 @@
   .song small { grid-column: 1; color: var(--muted); font-size: 14px; font-weight: 600; }
   .song span { grid-row: 1 / span 2; grid-column: 2; font-size: 13px; font-weight: 800; color: var(--muted); text-align: right; }
   .song[aria-pressed="true"] { border-color: var(--c); background: color-mix(in oklch, var(--c) 16%, var(--ink-2)); }
+  .song { position: relative; width: 100%; }
+  .song .del { position: absolute; top: -8px; right: -8px; width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--ink-3); color: var(--text); font-size: 18px; font-weight: 900; line-height: 1; box-shadow: 0 2px 0 oklch(0.1 0.04 290); }
+  .addsong {
+    display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 56px; border-radius: 16px;
+    border: 2px dashed var(--line); background: transparent; color: var(--text); font-weight: 800; font-size: 17px;
+  }
+  .addsong:active { background: var(--ink-2); }
+  .scroll { max-height: 42dvh; overflow-y: auto; display: grid; gap: 10px; padding: 8px 8px 4px; margin: -8px -8px 0; }
+  .progress { height: 10px; border-radius: 999px; background: var(--ink-3); overflow: hidden; }
+  .progress i { display: block; height: 100%; width: 0; background: var(--cyan); transition: width 150ms; }
   .lat { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; font-weight: 700; color: var(--muted); font-size: 14px; }
   .lat input { accent-color: var(--cyan); width: 100%; }
   .grade { font-size: 96px; font-weight: 900; line-height: 1; }
@@ -34,8 +44,15 @@
 <div class="overlay" id="menu">
   <div class="panel">
     <h1>Ритм</h1>
-    <p>Жми на дорожку, когда нота долетает до линии. Попадай в такт, держи комбо.</p>
-    <div class="songs" id="songs"></div>
+    <p>Играй под музыку: жми ноты в такт или лети по трассе. Можно загрузить свой трек.</p>
+    <div class="scroll"><div class="songs" id="songs"></div></div>
+    <label class="addsong" for="file">+ Своя музыка с телефона</label>
+    <input type="file" id="file" accept="audio/*" hidden>
+    <div class="seg" role="group" aria-label="Режим игры">
+      <button type="button" data-play="notes" aria-pressed="true">Ноты</button>
+      <button type="button" data-play="surf" aria-pressed="false">Сёрф</button>
+    </div>
+    <p id="playHint" style="font-size:15px"></p>
     <div class="seg" role="group" aria-label="Сложность">
       <button type="button" data-diff="0" aria-pressed="false">Легко</button>
       <button type="button" data-diff="1" aria-pressed="true">Норм</button>
@@ -43,6 +60,14 @@
     </div>
     <label class="lat">Задержка<input type="range" id="lat" min="-150" max="250" step="5"><output id="latOut"></output></label>
     <button class="btn" type="button" id="start">Играть</button>
+  </div>
+</div>
+
+<div class="overlay" id="busy" hidden>
+  <div class="panel">
+    <h1 id="busyTitle" style="font-size:30px">Слушаю трек…</h1>
+    <p id="busyText">Ищу темп и удары, это займёт несколько секунд.</p>
+    <div class="progress"><i id="busyBar"></i></div>
   </div>
 </div>
 
@@ -70,6 +95,7 @@
 </div>
 
 <script src="common.js"></script>
+<script src="beatmap.js"></script>
 <script>
 (() => {
 'use strict';
@@ -224,8 +250,63 @@ function play(e, at, style) {
   }
 }
 
+/* ---------- your own music: stored in IndexedDB on the phone ---------- */
+const DB = (() => {
+  let dbp = null;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    const r = indexedDB.open('igra-rhythm', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('tracks', { keyPath: 'id' });
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  }));
+  const tx = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => { const t = db.transaction('tracks', mode); const out = fn(t.objectStore('tracks')); t.oncomplete = () => res(out && out.result); t.onerror = () => rej(t.error); }); };
+  return {
+    all: () => tx('readonly', st => st.getAll()),
+    put: rec => tx('readwrite', st => st.put(rec)),
+    del: id => tx('readwrite', st => st.delete(id)),
+  };
+})();
+const USER_COLORS = [COL.orange, COL.yellow, COL.pink, COL.cyan, COL.lime];
+let userTracks = [];
+const decoded = new Map();      // id -> AudioBuffer for playback
+async function loadUserTracks() {
+  try {
+    const recs = await DB.all();
+    userTracks = recs.sort((a, b) => a.added - b.added).map((r, i) => ({ id: 'u' + r.id, trackId: r.id, name: r.name, desc: 'Твой трек', bpm: Math.round(r.analysis.bpm), color: USER_COLORS[i % USER_COLORS.length], custom: true, analysis: r.analysis }));
+  } catch { userTracks = []; }
+  const saved = G.get('rhythm.songId', null);
+  if (saved) song = allSongs().find(s => s.id === saved) || song;
+  renderSongs();
+}
+const allSongs = () => [...SONGS, ...userTracks];
+
+async function addTrack(file) {
+  if (!file) return;
+  if (file.size > 40e6) { G.toast('Файл больше 40 МБ — возьми трек покороче'); return; }
+  $('busy').hidden = false; $('busyTitle').textContent = 'Слушаю трек…'; $('busyBar').style.width = '0%';
+  try {
+    const data = await file.arrayBuffer();
+    // Analyse a 22 kHz mono copy: plenty for rhythm and fast on a phone.
+    const off = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 1, 22050);
+    const buf = await off.decodeAudioData(data.slice(0));
+    const mono = new Float32Array(buf.length);
+    for (let c = 0; c < buf.numberOfChannels; c++) { const ch = buf.getChannelData(c); for (let i = 0; i < ch.length; i++) mono[i] += ch[i] / buf.numberOfChannels; }
+    if (buf.duration < 20) throw new Error('short');
+    const analysis = await Beatmap.analyze(mono, buf.sampleRate, p => { $('busyBar').style.width = Math.round(p * 100) + '%'; });
+    const id = Date.now();
+    const name = file.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').slice(0, 48) || 'Мой трек';
+    await DB.put({ id, name, added: id, size: file.size, data, analysis });
+    await loadUserTracks();
+    song = allSongs().find(s => s.trackId === id) || song; G.set('rhythm.songId', song.id); renderSongs();
+    G.sfx('coin'); G.toast(`Готово: ${Math.round(analysis.bpm)} BPM`);
+  } catch (e) {
+    G.sfx('error');
+    G.toast(e && e.message === 'short' ? 'Трек слишком короткий: нужно хотя бы 20 секунд' : e && e.name === 'QuotaExceededError' ? 'Не хватает места в памяти телефона' : 'Не получилось прочитать файл. Попробуй MP3 или M4A.');
+  } finally { $('busy').hidden = true; $('file').value = ''; }
+}
+$('file').addEventListener('change', e => addTrack(e.target.files[0]));
+
 /* ---------- game state ---------- */
-let song = SONGS[G.get('rhythm.song', 0)] || SONGS[0], diff = G.get('rhythm.diff', 1), latency = G.get('rhythm.lat', 0);
+let song = SONGS.find(s => s.id === G.get('rhythm.songId', 'neon')) || SONGS[0], diff = G.get('rhythm.diff', 1), latency = G.get('rhythm.lat', 0);
 let chart = null, t0 = 0, evIdx = 0, state = 'menu', schedTimer = 0;
 let combo = 0, maxCombo = 0, scoreV = 0, counts = { perfect: 0, great: 0, good: 0, miss: 0 }, judge = null, fever = false;
 const laneFlash = [0, 0, 0, 0];
@@ -238,12 +319,48 @@ addEventListener('resize', layout);
 const hitY = () => H * 0.84;
 const now = () => ac ? ac.currentTime - t0 - latency / 1000 : 0;
 
-function startSong() {
+let source = null;
+let playMode = G.get('rhythm.play', 'notes');
+const surf = { lane: 1, x: 1 };
+// Surf: the 4 lanes fold into 3, every block still sits on a hit in the music; obstacles fill free lanes.
+function toSurf(notes, diff, seed) {
+  const r = rng(seed), map = [0, 1, 1, 2], out = [];
+  for (const n of notes) {
+    const lane = map[n.lane];
+    if (out.some(o => Math.abs(o.t - n.t) < 0.01)) continue;   // one ship, one block at a time
+    out.push({ t: n.t, lane, color: n.lane, hit: null });
+  }
+  const p = [0, 0.2, 0.34][diff];
+  for (const b of out.slice()) {
+    if (r() >= p) continue;
+    const free = [0, 1, 2].filter(l => !out.some(o => Math.abs(o.t - b.t) < 0.01 && o.lane === l));
+    if (free.length > 1) out.push({ t: b.t, lane: free[Math.floor(r() * free.length)], bad: true, hit: null });
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+function density(notes, length) {
+  const d = new Float32Array(Math.ceil(length) + 1);
+  notes.forEach(n => { if (!n.bad) d[Math.floor(n.t)]++; });
+  const mx = Math.max(1, ...d); return d.map(v => v / mx);
+}
+async function startSong() {
   audio();
-  chart = compose(song, diff);
+  if (song.custom) {
+    let buf = decoded.get(song.trackId);
+    if (!buf) {
+      $('busy').hidden = false; $('busyTitle').textContent = 'Загружаю трек…'; $('busyText').textContent = ''; $('busyBar').style.width = '60%';
+      try { const rec = (await DB.all()).find(r => r.id === song.trackId); buf = await ac.decodeAudioData(rec.data.slice(0)); decoded.set(song.trackId, buf); }
+      catch { $('busy').hidden = true; G.toast('Трек не открылся. Удали его и добавь заново.'); return; }
+      $('busy').hidden = true;
+    }
+    chart = { ev: [], notes: Beatmap.chart(song.analysis, diff), length: buf.duration, beat: 60 / song.analysis.bpm, buffer: buf };
+  } else chart = compose(song, diff);
+  if (playMode === 'surf') { chart.notes = toSurf(chart.notes, diff, (song.trackId || song.seed || 1) + diff); chart.dens = density(chart.notes, chart.length); surf.lane = 1; surf.x = 1; }
   window.__rhythm = { chart, now };   // for automated checks
-  combo = maxCombo = scoreV = 0; counts = { perfect: 0, great: 0, good: 0, miss: 0 }; judge = null; fever = false; evIdx = 0;
+  combo = maxCombo = scoreV = 0; counts = { perfect: 0, great: 0, good: 0, miss: 0, crash: 0 }; judge = null; fever = false; evIdx = 0;
   t0 = ac.currentTime + LEAD + 0.3;
+  if (source) { try { source.stop(); } catch {} source = null; }
+  if (chart.buffer) { source = ac.createBufferSource(); source.buffer = chart.buffer; source.connect(master); source.start(t0); }
   state = 'play'; ['menu', 'over', 'pause'].forEach(id => { $(id).hidden = true; });
   G.wake(true);
   clearInterval(schedTimer);
@@ -255,11 +372,14 @@ function schedule() {
   const horizon = ac.currentTime + 0.15;
   while (evIdx < chart.ev.length && t0 + chart.ev[evIdx].t < horizon) { const e = chart.ev[evIdx++]; play(e, Math.max(ac.currentTime, t0 + e.t), song.style); }
 }
-function stopSong() { clearInterval(schedTimer); if (master) { const g = master.gain; g.cancelScheduledValues(ac.currentTime); g.setValueAtTime(g.value, ac.currentTime); g.linearRampToValueAtTime(0, ac.currentTime + 0.15); setTimeout(() => { master.disconnect(); master = null; ac.close(); ac = null; }, 250); } }
+function stopSong() { clearInterval(schedTimer); if (source) { try { source.stop(ac.currentTime + 0.16); } catch {} source = null; } if (master) { const g = master.gain; g.cancelScheduledValues(ac.currentTime); g.setValueAtTime(g.value, ac.currentTime); g.linearRampToValueAtTime(0, ac.currentTime + 0.15); setTimeout(() => { master.disconnect(); master = null; ac.close(); ac = null; }, 250); } }
 
 /* ---------- input ---------- */
+function surfMove(d) { const l = Math.max(0, Math.min(2, surf.lane + d)); if (l !== surf.lane) { surf.lane = l; G.buzz(6); } }
+addEventListener('keydown', e => { if (playMode !== 'surf' || state !== 'play') return; if (e.key === 'ArrowLeft') surfMove(-1); if (e.key === 'ArrowRight') surfMove(1); });
 canvas.addEventListener('pointerdown', e => {
   if (state !== 'play') return;
+  if (playMode === 'surf') { surfMove(e.clientX < W / 2 ? -1 : 1); return; }
   const lane = Math.max(0, Math.min(3, Math.floor(e.clientX / (W / 4))));
   laneFlash[lane] = 1;
   const t = now();
@@ -289,6 +409,11 @@ function miss(n) {
 G.loop(dt => {
   if (state === 'play') {
     const t = now();
+    if (playMode === 'surf') {
+      surf.x += (surf.lane - surf.x) * Math.min(1, dt * 20);
+      for (const n of chart.notes) { if (n.t > t) break; if (!n.hit) surfPass(n); }
+      if (Math.random() < 0.6) { const p = surfProj(0), x = p.cx + (surf.x - 1) * p.hw * 0.66; fx.emit(x, p.y + p.hw * 0.12, { n: 1, color: fever ? COL.orange : song.color, speed: 60, life: 0.35, size: 4, gravity: 300, angle: Math.PI / 2, spread: 0.8 }); }
+    } else
     for (const n of chart.notes) { if (!n.hit && t - n.t > WIN.good) miss(n); if (n.t > t) break; }
     if (t > chart.length + 0.8) finish();
   }
@@ -298,6 +423,79 @@ G.loop(dt => {
   draw();
 });
 
+function surfPass(n) {
+  const on = surf.lane === n.lane, p = surfProj(0), x = p.cx + (n.lane - 1) * p.hw * 0.66;
+  if (n.bad) {
+    n.hit = on ? 'crash' : 'dodged';
+    if (on) { counts.crash = (counts.crash || 0) + 1; combo = 0; fever = false; scoreV = Math.max(0, scoreV - 500); shake.add(16); G.buzz(70); judge = { text: 'БАХ!', color: COL.red, t: 0.5 }; fx.emit(x, p.y, { n: 26, color: ['#888', COL.red, '#fff'], speed: 420, life: 0.5, size: 6, gravity: 500 }); }
+    return;
+  }
+  if (!on) return miss(n);
+  n.hit = 'perfect'; counts.perfect++; combo++; maxCombo = Math.max(maxCombo, combo);
+  if (combo === 30 && !fever) { fever = true; shake.add(12); G.buzz([20, 30, 60]); judge = { text: 'ФИВЕР ×2', color: COL.orange, t: 0.8 }; }
+  scoreV += Math.round(250 * (1 + Math.min(combo, 100) / 50) * (fever ? 2 : 1));
+  fx.emit(x, p.y - p.hw * 0.2, { n: 14, color: [LANE_COL[n.color], '#fff'], speed: 380, life: 0.45, size: 5, gravity: 500, angle: -Math.PI / 2, spread: 2.4 });
+  laneFlash[n.lane] = 1; G.buzz(6);
+}
+// Perspective: depth z in "seconds × speed"; s is the scale at that depth.
+function surfProj(z) {
+  const y0 = H * 0.3, yb = H * 0.84, s = 1 / (1 + z);
+  const t = now(), inten = chart && chart.dens ? chart.dens[Math.max(0, Math.floor(t))] || 0 : 0.4;
+  const bend = Math.sin(t * 0.33) * W * 0.06 * (0.4 + inten) + Math.sin(t * 0.9) * W * 0.015;
+  return { s, y: y0 + (yb - y0) * s, cx: W / 2 + bend * (1 - s) * (1 - s) * 3, hw: W * 0.46 * s };
+}
+function drawSurf(t) {
+  const V = 3, zmax = LEAD * V, y0 = H * 0.3;
+  const beatPhase = 1 - ((t / chart.beat) % 1 + 1) % 1;
+  // sun on the horizon, pulsing with the beat
+  const sunR = W * (0.22 + 0.02 * beatPhase * beatPhase);
+  const sg = ctx.createLinearGradient(0, y0 - sunR, 0, y0);
+  sg.addColorStop(0, COL.yellow); sg.addColorStop(1, fever ? COL.red : COL.pink);
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, y0); ctx.clip();
+  ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(W / 2, y0, sunR, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = '#0e0a20';
+  for (let i = 0; i < 5; i++) ctx.fillRect(0, y0 - sunR * (0.12 + i * 0.16), W, 3 + i);
+  ctx.restore();
+  ctx.fillStyle = '#120c26'; ctx.fillRect(0, y0, W, H - y0);
+  // road in strips, striped by beats so the floor itself moves in time
+  const steps = 48;
+  for (let i = steps; i > 0; i--) {
+    const za = -0.3 + (zmax + 0.3) * i / steps, zb = -0.3 + (zmax + 0.3) * (i - 1) / steps;
+    const a = surfProj(za), b = surfProj(zb);
+    const beatIdx = Math.floor((t + za / V) / (chart.beat / 2));
+    ctx.fillStyle = beatIdx % 2 ? '#1d1546' : '#271c5c';
+    ctx.beginPath(); ctx.moveTo(a.cx - a.hw, a.y); ctx.lineTo(a.cx + a.hw, a.y); ctx.lineTo(b.cx + b.hw, b.y); ctx.lineTo(b.cx - b.hw, b.y); ctx.fill();
+    ctx.strokeStyle = song.color; ctx.lineWidth = Math.max(1, 4 * b.s);
+    ctx.beginPath(); ctx.moveTo(a.cx - a.hw, a.y); ctx.lineTo(b.cx - b.hw, b.y); ctx.moveTo(a.cx + a.hw, a.y); ctx.lineTo(b.cx + b.hw, b.y); ctx.stroke();
+    if (i % 2) { ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = Math.max(1, 2 * b.s); for (const k of [-0.33, 0.33]) { ctx.beginPath(); ctx.moveTo(a.cx + a.hw * k, a.y); ctx.lineTo(b.cx + b.hw * k, b.y); ctx.stroke(); } }
+  }
+  // blocks, far to near
+  const vis = chart.notes.filter(n => !n.hit || n.hit === 'miss' || n.hit === 'dodged').filter(n => n.t - t < LEAD && n.t - t > -0.12);
+  for (let i = vis.length - 1; i >= 0; i--) {
+    const n = vis[i], z = (n.t - t) * V, p = surfProj(z);
+    const x = p.cx + (n.lane - 1) * p.hw * 0.66, sz = p.hw * 0.48, h = sz * 0.6;
+    ctx.globalAlpha = n.hit ? 0.3 : Math.min(1, (LEAD - (n.t - t)) * 3);
+    if (n.bad) {
+      ctx.fillStyle = '#3a3550'; ctx.fillRect(x - sz / 2, p.y - h, sz, h);
+      ctx.strokeStyle = COL.red; ctx.lineWidth = Math.max(2, 5 * p.s);
+      ctx.beginPath(); ctx.moveTo(x - sz * 0.32, p.y - h * 0.85); ctx.lineTo(x + sz * 0.32, p.y - h * 0.15); ctx.moveTo(x + sz * 0.32, p.y - h * 0.85); ctx.lineTo(x - sz * 0.32, p.y - h * 0.15); ctx.stroke();
+    } else {
+      const c = fever ? COL.orange : LANE_COL[n.color];
+      ctx.fillStyle = c; ctx.fillRect(x - sz / 2, p.y - h, sz, h);
+      ctx.fillStyle = 'rgba(255,255,255,.5)'; ctx.fillRect(x - sz / 2, p.y - h, sz, h * 0.22);
+      ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(x - sz / 2, p.y - h * 0.18, sz, h * 0.18);
+    }
+    ctx.globalAlpha = 1;
+  }
+  // the ship
+  const p = surfProj(0), x = p.cx + (surf.x - 1) * p.hw * 0.66, w = p.hw * 0.34, tilt = (surf.lane - surf.x) * 0.5;
+  ctx.save(); ctx.translate(x, p.y + w * 0.1); ctx.rotate(tilt);
+  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, w * 1.4); glow.addColorStop(0, fever ? 'rgba(255,140,40,.5)' : 'rgba(255,255,255,.35)'); glow.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(0, 0, w * 1.4, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(0, -w * 0.9); ctx.lineTo(w * 0.6, w * 0.3); ctx.lineTo(0, w * 0.08); ctx.lineTo(-w * 0.6, w * 0.3); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = song.color; ctx.beginPath(); ctx.moveTo(0, -w * 0.55); ctx.lineTo(w * 0.22, w * 0.05); ctx.lineTo(-w * 0.22, w * 0.05); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
 function draw() {
   ctx.save(); ctx.translate(shake.x, shake.y);
   const t = state === 'play' || state === 'paused' ? now() : 0;
@@ -311,6 +509,8 @@ function draw() {
   ctx.strokeStyle = 'rgba(255,255,255,.05)'; ctx.lineWidth = 2;
   for (let i = 0; i < 12; i++) { const y = ((i / 12 + (t * 0.5) % (1 / 12)) * H); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
   const lw = W / 4, hy = hitY();
+  if (playMode === 'surf' && chart && (state === 'play' || state === 'paused')) drawSurf(t);
+  else {
   for (let l = 0; l < 4; l++) {
     const x = l * lw;
     ctx.fillStyle = l % 2 ? 'rgba(255,255,255,.025)' : 'rgba(255,255,255,.05)'; ctx.fillRect(x, 0, lw, H);
@@ -339,6 +539,7 @@ function draw() {
       ctx.globalAlpha = 1;
     }
   }
+  }
   fx.draw(ctx);
   // HUD
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -365,14 +566,16 @@ function draw() {
 
 function finish() {
   state = 'over'; clearInterval(schedTimer); G.wake(false);
-  const total = chart.notes.length || 1;
+  const total = chart.notes.filter(n => !n.bad).length || 1;
   const acc = (counts.perfect + counts.great * 0.75 + counts.good * 0.4) / total;
-  const grade = counts.miss === 0 && counts.good === 0 && counts.great === 0 ? 'SS' : acc >= 0.95 ? 'S' : acc >= 0.85 ? 'A' : acc >= 0.7 ? 'B' : acc >= 0.5 ? 'C' : 'D';
+  const grade = counts.miss === 0 && counts.good === 0 && counts.great === 0 && !counts.crash ? 'SS' : acc >= 0.95 ? 'S' : acc >= 0.85 ? 'A' : acc >= 0.7 ? 'B' : acc >= 0.5 ? 'C' : 'D';
   $('grade').textContent = grade;
   $('grade').style.color = { SS: COL.yellow, S: COL.yellow, A: COL.lime, B: COL.cyan, C: COL.pink, D: COL.red }[grade];
-  $('overTitle').textContent = `${song.name} · ${['легко', 'норм', 'жёстко'][diff]}`;
-  $('res').innerHTML = [[scoreV.toLocaleString('ru-RU'), 'очки'], [Math.round(acc * 100) + '%', 'точность'], [maxCombo, 'макс. комбо'], [counts.perfect, 'идеально'], [counts.great + counts.good, 'отлично / норм'], [counts.miss, 'мимо']].map(([b, s]) => `<div><b>${b}</b><small>${s}</small></div>`).join('');
-  const r = G.best(`rhythm.${song.id}.${diff}`, scoreV);
+  $('overTitle').textContent = `${song.name} · ${playMode === 'surf' ? 'сёрф · ' : ''}${['легко', 'норм', 'жёстко'][diff]}`;
+  $('res').innerHTML = (playMode === 'surf'
+    ? [[scoreV.toLocaleString('ru-RU'), 'очки'], [Math.round(acc * 100) + '%', 'собрано'], [maxCombo, 'макс. комбо'], [counts.perfect, 'блоков'], [counts.miss, 'пропущено'], [counts.crash || 0, 'врезался']]
+    : [[scoreV.toLocaleString('ru-RU'), 'очки'], [Math.round(acc * 100) + '%', 'точность'], [maxCombo, 'макс. комбо'], [counts.perfect, 'идеально'], [counts.great + counts.good, 'отлично / норм'], [counts.miss, 'мимо']]).map(([b, s]) => `<div><b>${b}</b><small>${s}</small></div>`).join('');
+  const r = G.best(`rhythm.${song.id}.${diff}${playMode === 'surf' ? '.surf' : ''}`, scoreV);
   $('overNote').textContent = r.isNew ? 'Новый рекорд!' : `Рекорд: ${r.best.toLocaleString('ru-RU')}`;
   $('over').hidden = false;
   if (grade.startsWith('S') || r.isNew) { G.sfx('win'); fx.emit(W / 2, H * 0.2, { n: 90, color: [COL.yellow, COL.pink, COL.cyan, COL.lime], speed: 700, life: 1.5, size: 7, gravity: 500, shape: 'rect' }); }
@@ -381,13 +584,28 @@ function finish() {
 }
 
 /* ---------- menu ---------- */
+const escH = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function renderSongs() {
-  $('songs').innerHTML = SONGS.map((s, i) => {
-    const best = G.get(`best.rhythm.${s.id}.${diff}`, null);
-    return `<button type="button" class="song" data-song="${i}" style="--c:${s.color}" aria-pressed="${s === song}"><b style="color:${s.color}">${s.name}</b><small>${s.desc} · ${s.bpm} BPM</small><span>${best != null ? 'рекорд<br>' + best.toLocaleString('ru-RU') : 'новое'}</span></button>`;
+  $('songs').innerHTML = allSongs().map(s => {
+    const best = G.get(`best.rhythm.${s.id}.${diff}${playMode === 'surf' ? '.surf' : ''}`, null);
+    const del = s.custom ? `<button type="button" class="del" data-del="${s.trackId}" aria-label="Удалить трек">×</button>` : '';
+    return `<div style="position:relative"><button type="button" class="song" data-song="${s.id}" style="--c:${s.color}" aria-pressed="${s === song}"><b style="color:${s.color}">${escH(s.name)}</b><small>${s.desc} · ${s.bpm} BPM</small><span>${best != null ? 'рекорд<br>' + best.toLocaleString('ru-RU') : 'новое'}</span></button>${del}</div>`;
   }).join('');
 }
-$('songs').addEventListener('click', e => { const b = e.target.closest('[data-song]'); if (!b) return; song = SONGS[+b.dataset.song]; G.set('rhythm.song', +b.dataset.song); G.sfx('tap'); renderSongs(); });
+$('songs').addEventListener('click', async e => {
+  const d = e.target.closest('[data-del]');
+  if (d) {
+    const id = +d.dataset.del;
+    if (d.dataset.armed) { await DB.del(id).catch(() => {}); decoded.delete(id); if (song.trackId === id) song = SONGS[0]; await loadUserTracks(); G.toast('Трек удалён'); }
+    else { d.dataset.armed = '1'; d.textContent = '?'; d.setAttribute('aria-label', 'Нажми ещё раз, чтобы удалить'); G.toast('Нажми ещё раз, чтобы удалить'); setTimeout(() => { if (d.isConnected) { delete d.dataset.armed; d.textContent = '×'; } }, 2500); }
+    return;
+  }
+  const b = e.target.closest('[data-song]'); if (!b) return;
+  song = allSongs().find(s => s.id === b.dataset.song) || SONGS[0]; G.set('rhythm.songId', song.id); G.sfx('tap'); renderSongs();
+});
+const PLAY_HINT = { notes: 'Жми на дорожку, когда нота долетает до линии.', surf: 'Лети по трассе: тап слева или справа меняет полосу. Собирай цветные блоки, объезжай серые.' };
+function syncPlay() { document.querySelectorAll('[data-play]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.play === playMode))); $('playHint').textContent = PLAY_HINT[playMode]; }
+document.querySelectorAll('[data-play]').forEach(b => b.addEventListener('click', () => { playMode = b.dataset.play; G.set('rhythm.play', playMode); G.sfx('tap'); syncPlay(); renderSongs(); }));
 function syncDiff() { document.querySelectorAll('[data-diff]').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.diff === diff))); }
 document.querySelectorAll('[data-diff]').forEach(b => b.addEventListener('click', () => { diff = +b.dataset.diff; G.set('rhythm.diff', diff); G.sfx('tap'); syncDiff(); renderSongs(); }));
 const lat = $('lat');
@@ -402,7 +620,7 @@ $('quit').addEventListener('click', () => { stopSong(); $('pause').hidden = true
 const pause = () => { if (state !== 'play') return; state = 'paused'; clearInterval(schedTimer); ac && ac.suspend(); $('pause').hidden = false; };
 G.topbar({ pause });
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
-layout(); renderSongs(); syncDiff();
+layout(); syncPlay(); renderSongs(); syncDiff(); loadUserTracks();
 })();
 </script>
 </body>

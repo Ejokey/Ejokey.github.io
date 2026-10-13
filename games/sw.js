@@ -1,6 +1,6 @@
 // Offline cache for Игротека: everything is local, serve cache-first and refresh in the background.
-const CACHE = 'igra-v1';
-const ASSETS = ['./', './index.html', './common.css', './common.js', './hockey.html', './penalty.html', './basket.html', './rhythm.html', './words.html', './words5.json',
+const CACHE = 'igra-v4';
+const ASSETS = ['./', './index.html', './common.css', './common.js', './hockey.html', './penalty.html', './basket.html', './rhythm.html', './words.html', './words5.json', './beatmap.js',
   './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png',
   './fonts/rubik-cyr.woff2', './fonts/rubik-lat.woff2'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
