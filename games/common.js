@@ -86,6 +86,10 @@
     chips: (i = 0) => tone({ f: 600 * Math.pow(1.06, i), type: 'square', t: 0.05, v: 0.12 }),
     mult: (i = 0) => { tone({ f: 300 * Math.pow(1.09, i), f2: 600 * Math.pow(1.09, i), type: 'sawtooth', t: 0.09, v: 0.16 }); },
     coin: () => { tone({ f: 988, type: 'square', t: 0.06, v: 0.15 }); tone({ f: 1319, type: 'square', t: 0.18, v: 0.15, at: 0.06 }); },
+    // pentatonic bell that climbs with i: a run of perfect moves plays a little melody
+    note: (i = 0) => { const P = [0, 2, 4, 7, 9], f = 392 * Math.pow(2, (P[i % 5] + 12 * Math.floor(i / 5)) / 12); tone({ f: Math.min(f, 3200), type: 'triangle', t: 0.35, v: 0.28 }); tone({ f: Math.min(f * 2, 6400), type: 'sine', t: 0.25, v: 0.1 }); },
+    slice: () => { noise({ t: 0.09, v: 0.3, hp: 1200, lp: 7000, f2: 2500 }); tone({ f: 220, f2: 140, type: 'square', t: 0.06, v: 0.12 }); },
+    beep: (hi = false) => tone({ f: hi ? 1320 : 880, type: 'square', t: hi ? 0.18 : 0.08, v: 0.18 }),
     boom: () => { tone({ f: 90, f2: 30, type: 'sine', t: 0.5, v: 0.8 }); noise({ t: 0.5, v: 0.5, hp: 60, lp: 2000, f2: 100 }); },
   };
   G.sfx = (name, ...a) => { if (!G.sound) return; try { SFX[name] && SFX[name](...a); } catch {} };
@@ -191,7 +195,7 @@
     return bar;
   };
 
-  G.VERSION = 11;   // keep equal to the number in sw.js CACHE ('igra-v11'); shown on the hub
+  G.VERSION = 12;   // keep equal to the number in sw.js CACHE ('igra-v12'); shown on the hub
 
   // Updates: Android often resumes the app from memory instead of reloading it, so ask for a new
   // version on every open and every return to the app. When a new one takes over, the hub reloads

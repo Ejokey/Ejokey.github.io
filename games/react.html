@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#140f24">
+<title>Реакция — Игротека</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="common.css">
+<style>
+  html, body { overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+  #fx { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 6; }
+  .zones { position: fixed; inset: 0; display: grid; gap: 4px; background: var(--ink); }
+  .zone {
+    --c: var(--pink); position: relative; overflow: hidden; display: grid; place-items: center;
+    background: color-mix(in oklch, var(--c) 16%, var(--ink)); transition: background-color 160ms var(--ease);
+  }
+  .zone.win { background: color-mix(in oklch, var(--c) 70%, var(--ink)); }
+  .zone.bad { background: color-mix(in oklch, var(--red) 55%, var(--ink)); animation: jolt 260ms; }
+  .zone.out { filter: grayscale(0.9) brightness(0.7); }
+  @keyframes jolt { 25% { translate: -6px 0; } 75% { translate: 6px 0; } }
+  .inner { display: grid; justify-items: center; gap: 10px; padding: 16px; width: 100%; text-align: center; }
+  .zone.flip .inner { rotate: 180deg; }
+  .head { display: flex; align-items: center; gap: 10px; font-weight: 900; font-size: 17px; color: var(--c); }
+  .pips { display: flex; gap: 5px; }
+  .pip { width: 12px; height: 12px; border-radius: 50%; background: var(--ink-3); }
+  .pip.on { background: var(--c); }
+  .stim { min-height: 1.1em; display: grid; place-items: center; font-weight: 900; font-size: clamp(34px, 11vmin, 76px); line-height: 1; }
+  .stim .light { width: clamp(70px, 22vmin, 150px); aspect-ratio: 1; border-radius: 50%; background: var(--red); box-shadow: 0 0 40px color-mix(in oklch, var(--red) 60%, transparent); }
+  .stim .light.go { background: var(--lime); box-shadow: 0 0 60px var(--lime); }
+  .stim .word { letter-spacing: 0.02em; }
+  .stim .pair { display: flex; gap: 0.35em; }
+  .msg { min-height: 1.3em; font-weight: 800; font-size: 18px; color: var(--muted); text-wrap: balance; }
+  .rule { font-weight: 900; font-size: clamp(22px, 6.5vmin, 34px); line-height: 1.1; text-wrap: balance; }
+  body.multi .topbar { inset: 50% 0 auto 0; transform: translateY(-50%); padding: 0 12px; }
+  .times { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+  .times span { padding: 4px 10px; border-radius: 999px; background: var(--ink-2); font-weight: 800; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="zones" id="zones"></div>
+<canvas id="fx"></canvas>
+
+<div class="overlay" id="menu">
+  <div class="panel">
+    <h1>Реакция</h1>
+    <p>Положите телефон на стол, у каждого свой угол. В каждом раунде новое правило: жми первым, когда оно выполнится. Нажал раньше — минус очко. До 5 очков.</p>
+    <div class="seg" role="group" aria-label="Игроки">
+      <button type="button" data-n="1" aria-pressed="false">Один</button>
+      <button type="button" data-n="2" aria-pressed="true">2</button>
+      <button type="button" data-n="3" aria-pressed="false">3</button>
+      <button type="button" data-n="4" aria-pressed="false">4</button>
+    </div>
+    <p id="nHint"></p>
+    <button class="btn" type="button" id="start">Играть</button>
+  </div>
+</div>
+
+<div class="overlay" id="over" hidden>
+  <div class="panel">
+    <h1 id="overTitle"></h1>
+    <div class="big" id="overScore"></div>
+    <div class="times" id="times"></div>
+    <p id="overNote"></p>
+    <div class="choices">
+      <button class="btn" type="button" id="again">Ещё раз</button>
+      <button class="btn ghost" type="button" id="overMenu">Меню</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COL = { pink: css('--pink'), cyan: css('--cyan'), lime: css('--lime'), yellow: css('--yellow'), red: css('--red') };
+const PVAR = ['--pink', '--cyan', '--lime', '--yellow'], PCOL = [COL.pink, COL.cyan, COL.lime, COL.yellow];
+const NAMES = ['Розовый', 'Голубой', 'Зелёный', 'Жёлтый'];
+const TARGET = 5, SOLO_TRIES = 5;
+
+/* ---------- round types: each streams stimuli until the one you must hit ---------- */
+const INKS = [['КРАСНЫЙ', COL.red], ['СИНИЙ', 'oklch(0.62 0.2 260)'], ['ЗЕЛЁНЫЙ', COL.lime], ['ЖЁЛТЫЙ', COL.yellow]];
+const EMO = ['🐸', '🍕', '🚀', '👻', '🐙', '🍩', '⚽', '🎸', '🦊', '🌵'];
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const TYPES = {
+  light: {
+    rule: 'Жми, когда загорится <span style="color:var(--lime)">ЗЕЛЁНЫЙ</span>',
+    gap: () => 1.4 + Math.random() * 3.2, steps: () => 1,
+    off: () => ({ html: '<div class="light"></div>' }),
+    on: () => ({ html: '<div class="light go"></div>' }),
+  },
+  color: {
+    rule: 'Жми, когда слово <b>совпадёт</b> со своим цветом',
+    gap: () => 0.85, steps: () => 3 + Math.floor(Math.random() * 5),
+    off: () => { const w = pick(INKS); let c; do c = pick(INKS); while (c === w); return { html: `<span class="word" style="color:${c[1]}">${w[0]}</span>` }; },
+    on: () => { const w = pick(INKS); return { html: `<span class="word" style="color:${w[1]}">${w[0]}</span>` }; },
+  },
+  seven: {
+    rule: 'Жми на число <b>7</b>',
+    gap: () => 0.7, steps: () => 4 + Math.floor(Math.random() * 6),
+    off: () => { let d; do d = Math.floor(Math.random() * 10); while (d === 7); return { html: `<span>${d}</span>` }; },
+    on: () => ({ html: '<span>7</span>' }),
+  },
+  pair: {
+    rule: 'Жми, когда картинки <b>одинаковые</b>',
+    gap: () => 0.8, steps: () => 3 + Math.floor(Math.random() * 5),
+    off: () => { const a = pick(EMO); let b; do b = pick(EMO); while (b === a); return { html: `<span class="pair"><span>${a}</span><span>${b}</span></span>` }; },
+    on: () => { const a = pick(EMO); return { html: `<span class="pair"><span>${a}</span><span>${a}</span></span>` }; },
+  },
+};
+
+let nPlayers = G.get('react.n', 2), zones = [], scores = [], state = 'menu', round = null, lastType = '';
+let soloTimes = [];
+const fxCanvas = $('fx'); let fctx, FW, FH;
+const fx = new G.Particles();
+
+/* ---------- zones ---------- */
+function buildZones() {
+  const box = $('zones'); box.innerHTML = '';
+  const n = nPlayers;
+  // seats: who sits on which side of the phone; the far side reads upside down
+  const grid = { 1: ['1fr', '1fr', ['1/1/2/2']], 2: ['1fr', '1fr 1fr', ['1/1/2/2', '2/1/3/2']], 3: ['1fr 1fr', '1fr 1fr', ['1/1/2/3', '2/1/3/2', '2/2/3/3']], 4: ['1fr 1fr', '1fr 1fr', ['1/1/2/2', '1/2/2/3', '2/1/3/2', '2/2/3/3']] }[n];
+  box.style.gridTemplateColumns = grid[0]; box.style.gridTemplateRows = grid[1];
+  zones = grid[2].map((area, i) => {
+    const z = document.createElement('div');
+    z.className = 'zone' + (area.startsWith('1/') && n > 1 ? ' flip' : '');
+    z.style.gridArea = area; z.style.setProperty('--c', `var(${PVAR[i]})`);
+    z.innerHTML = `<div class="inner"><div class="head"><span>${n === 1 ? 'Реакция' : NAMES[i]}</span><span class="pips"></span></div><div class="stim"></div><div class="msg"></div></div>`;
+    z.addEventListener('pointerdown', e => tap(i, e));
+    box.appendChild(z);
+    return { el: z, stim: z.querySelector('.stim'), msg: z.querySelector('.msg'), pips: z.querySelector('.pips') };
+  });
+  document.body.classList.toggle('multi', n > 1);
+  fitFx();
+}
+function fitFx() { ({ w: FW, h: FH, ctx: fctx } = G.fit(fxCanvas)); }
+addEventListener('resize', fitFx);
+function pips() {
+  zones.forEach((z, i) => {
+    if (nPlayers === 1) { z.pips.innerHTML = Array.from({ length: SOLO_TRIES }, (_, k) => `<span class="pip${k < soloTimes.length ? ' on' : ''}"></span>`).join(''); return; }
+    z.pips.innerHTML = Array.from({ length: TARGET }, (_, k) => `<span class="pip${k < scores[i] ? ' on' : ''}"></span>`).join('');
+  });
+}
+const all = (fn) => zones.forEach(fn);
+const setStim = html => all(z => { z.stim.innerHTML = html; });
+const setMsg = (i, text) => { zones[i].msg.textContent = text; };
+const clearMarks = () => all(z => z.el.classList.remove('win', 'bad', 'out'));
+
+/* ---------- flow ---------- */
+function startGame() {
+  ['menu', 'over'].forEach(id => { $(id).hidden = true; });
+  scores = Array(nPlayers).fill(0); soloTimes = []; lastType = '';
+  buildZones(); pips(); state = 'play'; G.wake(true);
+  newRound();
+}
+function newRound() {
+  clearMarks();
+  let type;
+  if (nPlayers === 1) type = 'light';
+  else { do type = pick(Object.keys(TYPES)); while (type === lastType); }
+  lastType = type;
+  const T = TYPES[type];
+  round = { type, T, phase: 'intro', t: 0, next: nPlayers === 1 ? 0.9 : 2.2, left: T.steps(), locked: new Set(), shownAt: 0 };
+  all((z, i) => { z.stim.innerHTML = `<div class="rule">${T.rule}</div>`; z.msg.textContent = ''; });
+}
+function advance() {
+  const r = round;
+  if (r.phase === 'intro') { r.phase = 'run'; setStim(r.T.off().html); r.next = r.t + r.T.gap(); return; }
+  if (r.phase === 'run') {
+    r.left--;
+    if (r.left <= 0) { r.phase = 'target'; setStim(r.T.on().html); r.shownAt = performance.now(); r.next = r.t + (nPlayers === 1 ? 3 : 2.6); G.sfx('beep', true); return; }
+    setStim(r.T.off().html); G.sfx('key'); r.next = r.t + r.T.gap(); return;
+  }
+  if (r.phase === 'target') {                       // nobody hit it in time
+    r.phase = 'done'; all((z, i) => setMsg(i, 'Никто не успел'));
+    G.sfx('miss'); r.next = r.t + 1.3; return;
+  }
+  if (r.phase === 'done') nextOrEnd();
+}
+function nextOrEnd() {
+  if (nPlayers === 1 && soloTimes.length >= SOLO_TRIES) return finish();
+  if (nPlayers > 1 && scores.some(s => s >= TARGET)) return finish();
+  newRound();
+}
+function tap(i, e) {
+  if (state !== 'play' || !round) return;
+  const r = round;
+  if (r.phase === 'intro' || r.phase === 'done' || r.locked.has(i)) return;
+  const x = e.clientX, y = e.clientY;
+  if (r.phase === 'run') {                          // false start
+    r.locked.add(i);
+    zones[i].el.classList.add('bad', 'out');
+    if (nPlayers === 1) { setMsg(i, 'Рано! Ещё раз'); G.sfx('error'); G.buzz(60); r.locked.clear(); setTimeout(() => zones[i].el.classList.remove('bad', 'out'), 400); r.phase = 'run'; r.left = 1; r.next = r.t + 1.4 + Math.random() * 2.5; setStim(r.T.off().html); return; }
+    scores[i] = Math.max(0, scores[i] - 1); pips();
+    setMsg(i, 'Рано! −1'); G.sfx('error'); G.buzz(60);
+    if (r.locked.size >= nPlayers) { r.phase = 'done'; r.next = r.t + 1.3; all((z, k) => { if (k !== i) setMsg(k, 'Все поторопились'); }); }
+    return;
+  }
+  // first correct tap wins the round
+  const ms = Math.round(performance.now() - r.shownAt);
+  r.phase = 'done'; r.next = r.t + (nPlayers === 1 ? 1.1 : 1.5);
+  zones[i].el.classList.add('win');
+  fx.emit(x, y, { n: 34, color: [PCOL[i], '#fff', COL.yellow], speed: 520, life: 0.7, size: 6, gravity: 500, shape: 'rect' });
+  G.sfx('coin'); G.buzz([20, 30, 40]);
+  if (nPlayers === 1) { soloTimes.push(ms); setMsg(i, `${ms} мс`); pips(); return; }
+  scores[i]++; pips();
+  setMsg(i, `+1 · ${ms} мс`);
+  all((z, k) => { if (k !== i && !r.locked.has(k)) setMsg(k, `${NAMES[i]} быстрее`); });
+}
+function finish() {
+  state = 'over'; round = null; G.wake(false);
+  const times = $('times');
+  if (nPlayers === 1) {
+    const avg = Math.round(soloTimes.reduce((a, b) => a + b, 0) / soloTimes.length);
+    $('overTitle').textContent = 'Твоя реакция'; $('overTitle').style.color = '';
+    $('overScore').textContent = `${avg} мс`;
+    times.innerHTML = soloTimes.map(t => `<span>${t}</span>`).join(''); times.hidden = false;
+    const r = G.best('react', avg, true);
+    $('overNote').textContent = r.isNew ? 'Новый рекорд!' : `Рекорд: ${r.best} мс. ${avg < 250 ? 'Очень быстро!' : avg < 330 ? 'Хорошо!' : 'Можно быстрее'}`;
+    if (r.isNew) G.sfx('win');
+  } else {
+    const w = scores.indexOf(Math.max(...scores));
+    $('overTitle').textContent = `Победил ${NAMES[w].toLowerCase()}`; $('overTitle').style.color = PCOL[w];
+    $('overScore').textContent = scores.join(' : ');
+    times.hidden = true; $('overNote').textContent = '';
+    G.sfx('win');
+    const wins = G.get('react.games', 0) + 1; G.set('react.games', wins);
+  }
+  setTimeout(() => { $('over').hidden = false; }, 500);
+}
+
+/* ---------- loop ---------- */
+G.loop(dt => {
+  if (state === 'play' && round) { round.t += dt; if (round.t >= round.next) advance(); }
+  fx.update(dt);
+  fctx.clearRect(0, 0, FW, FH); fx.draw(fctx);
+});
+document.addEventListener('visibilitychange', () => {        // never let a round run on in the background
+  if (document.hidden && state === 'play' && round && round.phase !== 'intro') { round.phase = 'done'; round.next = round.t + 0.5; all((z, i) => setMsg(i, 'Пауза — раунд заново')); lastType = ''; }
+});
+
+/* ---------- menus ---------- */
+const HINT = { 1: 'Тест реакции: 5 попыток, жми, когда круг станет зелёным.', 2: 'Телефон между вами: у каждого своя половина экрана.', 3: 'Один сверху, двое снизу.', 4: 'Каждому по углу экрана.' };
+function syncMenu() { document.querySelectorAll('[data-n]').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.n === nPlayers))); $('nHint').textContent = HINT[nPlayers]; }
+document.querySelectorAll('[data-n]').forEach(b => b.addEventListener('click', () => { nPlayers = +b.dataset.n; G.set('react.n', nPlayers); G.sfx('tap'); syncMenu(); }));
+$('start').addEventListener('click', startGame);
+$('again').addEventListener('click', startGame);
+$('overMenu').addEventListener('click', () => { $('over').hidden = true; $('menu').hidden = false; state = 'menu'; });
+G.topbar();
+buildZones(); syncMenu();
+window.__react = { get round() { return round; }, get scores() { return scores; }, get soloTimes() { return soloTimes; }, get state() { return state; } };   // for automated checks
+})();
+</script>
+</body>
+</html>
