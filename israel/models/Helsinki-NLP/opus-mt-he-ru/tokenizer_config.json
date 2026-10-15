@@ -1,0 +1,13 @@
+{
+  "clean_up_tokenization_spaces": true,
+  "eos_token": "</s>",
+  "model_max_length": 512,
+  "pad_token": "<pad>",
+  "separate_vocabs": false,
+  "source_lang": "heb",
+  "sp_model_kwargs": {},
+  "target_lang": "rus",
+  "tokenizer_class": "MarianTokenizer",
+  "tokenizer_file": null,
+  "unk_token": "<unk>"
+}

@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b5cab">
+<title>Израиль — помощник</title>
+<meta name="description" content="Офлайн-переводчик и разговорник для поездки в Израиль: голос, иврит и английский, конвертер шекелей.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root {
+    --bg: #f4f6f9; --card: #ffffff; --ink: #14181f; --muted: #5a6472; --line: #dde2e9;
+    --accent: #0b5cab; --soft: #e6effa; --warn: #b3261e;
+    --them: #0f7b4f; --them-soft: #e3f4ec;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Hebrew", Arial, sans-serif;
+    font-size: 19px; line-height: 1.35;
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  header {
+    position: sticky; top: 0; z-index: 5; background: var(--accent); color: #fff;
+    padding: 12px 16px 10px;
+  }
+  header h1 { margin: 0; font-size: 21px; font-weight: 700; }
+  .seg { display: flex; gap: 8px; margin-top: 8px; }
+  .seg button {
+    flex: 1; font-size: 17px; padding: 8px 6px; border-radius: 10px;
+    border: 2px solid rgba(255,255,255,.55); background: transparent; color: #fff;
+  }
+  .seg button.on { background: #fff; color: var(--accent); border-color: #fff; font-weight: 700; }
+  .seg-label { font-size: 15px; opacity: .9; margin-top: 8px; }
+  main { padding: 12px 16px; max-width: 720px; margin: 0 auto; }
+  .tab { display: none; }
+  .tab.on { display: block; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-top: 12px; }
+  .card h2 { margin: 0 0 10px; font-size: 20px; }
+  .note { color: var(--muted); font-size: 16px; margin-top: 8px; }
+  .warn { color: var(--warn); font-weight: 600; }
+  .btn {
+    display: block; width: 100%; font-size: 20px; font-weight: 700; padding: 15px 10px;
+    border-radius: 14px; border: none; background: var(--accent); color: #fff; text-align: center;
+  }
+  .btn.ghost { background: var(--soft); color: var(--accent); }
+  .btn:disabled { opacity: .5; }
+
+  /* Переводчик */
+  #setup .bar { height: 12px; background: var(--soft); border-radius: 6px; overflow: hidden; margin-top: 12px; }
+  #setup .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  #chat { display: flex; flex-direction: column; gap: 10px; padding-bottom: 210px; }
+  .hello { text-align: center; color: var(--muted); padding: 22px 8px 6px; font-size: 18px; }
+  .hello b { color: var(--ink); }
+  .msg { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px; }
+  .msg.me { border-left: 6px solid var(--accent); }
+  .msg.them { border-left: 6px solid var(--them); background: #fbfefc; }
+  .msg .who { font-size: 14px; color: var(--muted); }
+  .msg .src { font-size: 17px; color: var(--muted); margin-top: 2px; }
+  .msg .dst { font-size: 25px; font-weight: 700; margin-top: 6px; line-height: 1.3; }
+  .msg .row { display: flex; gap: 8px; margin-top: 10px; }
+  .msg .row button {
+    flex: 1; font-size: 17px; padding: 9px 6px; border-radius: 10px; border: none;
+    background: var(--soft); color: var(--accent); font-weight: 600;
+  }
+  .msg.them .row button { background: var(--them-soft); color: var(--them); }
+  .msg.busy .dst { color: var(--muted); font-weight: 600; font-size: 20px; }
+  .msg.err .dst { color: var(--warn); font-size: 19px; }
+  [dir="rtl"] { text-align: right; }
+
+  #dock {
+    position: fixed; left: 0; right: 0; bottom: calc(66px + env(safe-area-inset-bottom)); z-index: 8;
+    background: linear-gradient(to top, var(--bg) 82%, rgba(244,246,249,0));
+    padding: 18px 16px 10px; display: none;
+  }
+  #dock.on { display: block; }
+  #dock .inner { max-width: 720px; margin: 0 auto; }
+  .mics { display: flex; gap: 10px; }
+  .mic {
+    flex: 1; border: none; border-radius: 20px; padding: 14px 6px; color: #fff; min-height: 96px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    font-size: 18px; font-weight: 700; line-height: 1.15;
+  }
+  .mic .i { font-size: 30px; line-height: 1; }
+  .mic small { font-weight: 500; font-size: 15px; opacity: .92; }
+  .mic.me { background: var(--accent); }
+  .mic.them { background: var(--them); }
+  .mic:disabled { opacity: .4; }
+  .mic.rec { background: var(--warn); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(179,38,30,.45); } 50% { box-shadow: 0 0 0 10px rgba(179,38,30,0); } }
+  .type { display: flex; gap: 8px; margin-top: 10px; }
+  .type textarea {
+    flex: 1; font: inherit; font-size: 18px; padding: 10px 12px; border-radius: 12px;
+    border: 2px solid var(--line); background: #fff; color: var(--ink); resize: none; height: 48px;
+  }
+  .type button { width: 56px; border: none; border-radius: 12px; background: var(--ink); color: #fff; font-size: 22px; }
+
+  /* Фразы */
+  .search {
+    width: 100%; font: inherit; font-size: 19px; padding: 12px 14px;
+    border: 2px solid var(--line); border-radius: 12px; background: var(--card); color: var(--ink);
+  }
+  .cats { display: flex; gap: 8px; overflow-x: auto; padding: 12px 0 4px; scrollbar-width: none; }
+  .cats::-webkit-scrollbar { display: none; }
+  .cats button {
+    flex: none; font-size: 17px; padding: 9px 14px; border-radius: 999px;
+    border: 2px solid var(--line); background: var(--card); white-space: nowrap;
+  }
+  .cats button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .phrase {
+    display: block; width: 100%; text-align: left; background: var(--card);
+    border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-top: 10px;
+  }
+  .phrase:active { background: var(--soft); }
+  .phrase .ru { font-weight: 700; font-size: 20px; }
+  .phrase .he { font-size: 24px; margin-top: 4px; direction: rtl; text-align: right; }
+  .phrase .tr { color: var(--muted); font-size: 17px; margin-top: 2px; }
+  .empty { color: var(--muted); padding: 24px 4px; text-align: center; }
+
+  /* Крупный показ */
+  .show {
+    position: fixed; inset: 0; z-index: 20; background: #fff; color: #000;
+    display: none; flex-direction: column; padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  }
+  .show.on { display: flex; }
+  .show .body { flex: 1; overflow-y: auto; display: flex; flex-direction: column; justify-content: center; gap: 18px; }
+  .show .big { font-size: 44px; line-height: 1.25; font-weight: 700; text-align: center; overflow-wrap: anywhere; }
+  .show .sub { font-size: 26px; text-align: center; color: #1d2a3a; }
+  .show .hint { font-size: 18px; text-align: center; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; }
+  .show .hint b { color: var(--ink); }
+  .show .actions { display: flex; gap: 10px; }
+  .show .actions .btn { flex: 1; }
+
+  /* Деньги */
+  .rate-row { display: flex; align-items: center; gap: 10px; font-size: 20px; }
+  .rate-row span { white-space: nowrap; }
+  .rate-row input { flex: 1; min-width: 0; }
+  input.num {
+    font: inherit; font-size: 24px; padding: 10px 12px; border: 2px solid var(--line);
+    border-radius: 12px; background: #fff; color: var(--ink); width: 100%;
+  }
+  .dir { display: flex; gap: 8px; margin-bottom: 12px; }
+  .dir button { flex: 1; font-size: 18px; padding: 10px; border-radius: 12px; border: 2px solid var(--line); background: #fff; }
+  .dir button.on { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 700; }
+  .result { font-size: 40px; font-weight: 800; margin-top: 14px; text-align: center; }
+  .result small { display: block; font-size: 17px; font-weight: 400; color: var(--muted); }
+  .chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
+  .chips button {
+    font-size: 16px; padding: 10px 4px; border-radius: 10px; white-space: nowrap;
+    border: 1px solid var(--line); background: var(--soft); color: var(--accent); font-weight: 600;
+  }
+  .table { width: 100%; border-collapse: collapse; font-size: 19px; }
+  .table td { padding: 8px 4px; border-bottom: 1px solid var(--line); }
+  .table td:last-child { text-align: right; font-weight: 700; }
+
+  /* Справка */
+  .call {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    text-decoration: none; color: inherit; padding: 12px 0; border-bottom: 1px solid var(--line);
+  }
+  .call:last-of-type { border-bottom: none; }
+  .call .n { font-size: 30px; font-weight: 800; color: var(--warn); min-width: 70px; text-align: right; }
+  .info ul { margin: 6px 0; padding-left: 22px; }
+  .info li { margin: 4px 0; }
+  .check { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .check:last-child { border-bottom: none; }
+  .ok { color: var(--them); font-weight: 700; }
+  .no { color: var(--warn); font-weight: 700; }
+
+  .toast {
+    position: fixed; left: 16px; right: 16px; bottom: calc(90px + env(safe-area-inset-bottom)); z-index: 30;
+    background: #222; color: #fff; padding: 12px 14px; border-radius: 12px; font-size: 17px; display: none;
+  }
+  .toast.on { display: block; }
+
+  nav {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: flex;
+    background: #fff; border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom);
+  }
+  nav button {
+    flex: 1; font-size: 15px; padding: 8px 2px 10px; border: none; background: none; color: var(--muted);
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  nav button .i { font-size: 24px; line-height: 1; }
+  nav button.on { color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="title">Переводчик</h1>
+  <div id="hdr-talk">
+    <div class="seg" id="other">
+      <button data-l="he">Иврит · עברית</button>
+      <button data-l="en">Англ. · English</button>
+    </div>
+  </div>
+  <div class="seg" id="gender" hidden>
+    <button data-g="m">Я мужчина</button>
+    <button data-g="f">Я женщина</button>
+  </div>
+</header>
+
+<main>
+  <section class="tab on" id="tab-talk">
+    <div class="card" id="setup" hidden>
+      <h2>Скачайте переводчик</h2>
+      <p style="margin:0">Один раз, по Wi-Fi: около <b id="setup-mb">800</b> МБ. После этого переводчик работает без интернета.</p>
+      <button class="btn" id="dl" style="margin-top:14px">Скачать</button>
+      <div class="bar" hidden id="dl-bar"><i></i></div>
+      <div class="note" id="dl-note"></div>
+    </div>
+    <div id="chat">
+      <div class="hello" id="hello">
+        Сверху выберите язык собеседника.<br>
+        Нажмите <b>синюю кнопку</b> и говорите по-русски.<br>
+        Собеседник нажимает <b>зелёную</b> и отвечает.<br>
+        Перевод появится здесь и прозвучит вслух.
+      </div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-phrases">
+    <input class="search" id="search" type="search" placeholder="Поиск: вода, такси, аптека…" autocomplete="off">
+    <div class="cats" id="cats"></div>
+    <div id="list"></div>
+  </section>
+
+  <section class="tab" id="tab-money">
+    <div class="card">
+      <h2>Курс</h2>
+      <div class="rate-row">
+        <span>1 ₪ =</span>
+        <input class="num" id="rate" type="number" inputmode="decimal" step="0.01" min="0">
+        <span>₽</span>
+      </div>
+      <div class="note" id="rate-note"></div>
+    </div>
+    <div class="card">
+      <div class="dir" id="dir">
+        <button data-d="ils" class="on">₪ → ₽</button>
+        <button data-d="rub">₽ → ₪</button>
+      </div>
+      <input class="num" id="amount" type="number" inputmode="decimal" min="0" placeholder="Сумма в ₪">
+      <div class="result" id="result">—</div>
+      <div class="chips" id="chips"></div>
+    </div>
+    <div class="card">
+      <h2>Шпаргалка цен</h2>
+      <table class="table" id="cheat"></table>
+    </div>
+  </section>
+
+  <section class="tab info" id="tab-help">
+    <div class="card">
+      <h2>Экстренные номера</h2>
+      <a class="call" href="tel:101"><span>Скорая помощь<br><small>Маген Давид Адом</small></span><span class="n">101</span></a>
+      <a class="call" href="tel:100"><span>Полиция</span><span class="n">100</span></a>
+      <a class="call" href="tel:102"><span>Пожарные</span><span class="n">102</span></a>
+      <a class="call" href="tel:104"><span>Служба тыла<br><small>сирены, укрытия</small></span><span class="n">104</span></a>
+      <a class="call" href="tel:112"><span>Единый номер</span><span class="n">112</span></a>
+      <p class="note">Экстренные номера обычно набираются даже без сим-карты. Скажите по-английски: <b>«Russian, please»</b> — у скорой и полиции часто есть русскоязычные операторы.</p>
+    </div>
+
+    <div class="card">
+      <h2>Готовность переводчика</h2>
+      <div id="ready"></div>
+      <p class="note">Голоса ставятся в настройках телефона: <b>Настройки → Специальные возможности → Синтез речи → Google → Установить голосовые данные</b>. Скачайте «Иврит», «Русский» и «Английский».</p>
+    </div>
+
+    <div class="card">
+      <h2>Если сирена</h2>
+      <ul>
+        <li>Сразу идите в укрытие: защищённая комната (<b>мамад</b>), бомбоубежище (<b>миклат</b>) или лестничная клетка без окон.</li>
+        <li>На улице — в ближайшее здание. Негде укрыться — лечь на землю, руки на голову.</li>
+        <li>Оставайтесь в укрытии около 10 минут, если не сказали иначе.</li>
+        <li>Фраза «Где укрытие?» — во вкладке «Фразы», раздел «Помощь».</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Шаббат (суббота)</h2>
+      <ul>
+        <li>С вечера пятницы до вечера субботы.</li>
+        <li>Автобусы и поезда почти не ходят. Такси работает, но дороже.</li>
+        <li>Многие магазины и кафе закрыты. Продукты лучше купить в пятницу до обеда.</li>
+        <li>В Тель-Авиве и Эйлате открыто больше, чем в Иерусалиме.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Деньги</h2>
+      <ul>
+        <li>Валюта — шекель, <b>₪</b> (пишут NIS или ILS).</li>
+        <li>Карты принимают почти везде, в том числе телефоном.</li>
+        <li>В кафе на чай оставляют 10–15%. Сначала спросите, не включено ли обслуживание в счёт.</li>
+        <li>В такси просите включить счётчик (фраза в разделе «Транспорт»).</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Полезно знать</h2>
+      <ul>
+        <li>По-русски в Израиле говорят многие. Не стесняйтесь спросить: фраза «Здесь кто-нибудь говорит по-русски?».</li>
+        <li>Воду из-под крана можно пить.</li>
+        <li>Солнце сильное: шляпа, крем, вода с собой. С 11 до 16 лучше в тени.</li>
+        <li>Розетки свои, но обычные тонкие вилки от телефонов подходят.</li>
+        <li>Аптеки: «Супер-Фарм» (Super-Pharm) и «Бе Фарм» (Be) — их много в городах и торговых центрах.</li>
+        <li>Неделя начинается в воскресенье: это рабочий день.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Как пользоваться</h2>
+      <ul>
+        <li><b>Переводчик:</b> нажмите кнопку, скажите фразу, нажмите ещё раз. Говорите коротко, по одной мысли.</li>
+        <li>Машинный перевод иногда ошибается. Важное (лекарства, адрес) лучше показать из «Фраз».</li>
+        <li><b>Фразы:</b> нажмите на фразу — она откроется крупно, покажите экран человеку.</li>
+        <li>Серая строчка — как произносить самим.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<div id="dock">
+  <div class="inner">
+    <div class="mics">
+      <button class="mic me" id="mic-me"><span class="i">🎤</span><span class="lbl">Я говорю</span><small>по-русски</small></button>
+      <button class="mic them" id="mic-them"><span class="i">🎤</span><span class="lbl">דברו כאן</span><small>לחצו ודברו</small></button>
+    </div>
+    <div class="type">
+      <textarea id="typed" rows="1" placeholder="Или напишите… / כתבו… / Type…"></textarea>
+      <button id="send" aria-label="Перевести">➤</button>
+    </div>
+  </div>
+</div>
+
+<div class="show" id="show">
+  <div class="body">
+    <div class="big" id="s-big"></div>
+    <div class="sub" id="s-sub"></div>
+    <div class="hint" id="s-hint"></div>
+  </div>
+  <div class="actions">
+    <button class="btn ghost" id="s-speak">🔊 Сказать</button>
+    <button class="btn" id="s-close">Закрыть</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<nav id="nav">
+  <button data-t="talk" class="on"><span class="i">🎙️</span>Переводчик</button>
+  <button data-t="phrases"><span class="i">💬</span>Фразы</button>
+  <button data-t="money"><span class="i">₪</span>Деньги</button>
+  <button data-t="help"><span class="i">ℹ️</span>Справка</button>
+</nav>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
