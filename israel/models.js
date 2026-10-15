@@ -11,4 +11,7 @@ export const MODELS = {
 };
 
 export const SIZE_MB = { 'asr-base': 78, 'asr-he': 250, 'ru-he': 120, 'he-ru': 120, 'ru-en': 112, 'en-ru': 112 };
-export const BASIC = ['asr-base', 'asr-he', 'ru-he', 'he-ru', 'ru-en', 'en-ru'];
+// Обязательное: только перевод. Распознаёт речь сам телефон (Google).
+export const BASIC = ['ru-he', 'he-ru', 'ru-en', 'en-ru'];
+// Запасное распознавание прямо в приложении — если Google без интернета не работает.
+export const WHISPER = ['asr-base', 'asr-he'];

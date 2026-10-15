@@ -52,8 +52,6 @@
   .btn:disabled { opacity: .5; }
 
   /* Переводчик */
-  #setup .bar { height: 12px; background: var(--soft); border-radius: 6px; overflow: hidden; margin-top: 12px; }
-  #setup .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
   #chat { display: flex; flex-direction: column; gap: 10px; padding-bottom: 210px; }
   .hello { text-align: center; color: var(--muted); padding: 22px 8px 6px; font-size: 18px; }
   .hello b { color: var(--ink); }
@@ -167,6 +165,11 @@
   .call .n { font-size: 30px; font-weight: 800; color: var(--warn); min-width: 70px; text-align: right; }
   .info ul { margin: 6px 0; padding-left: 22px; }
   .info li { margin: 4px 0; }
+  .seg.light button { border-color: var(--line); color: var(--ink); background: #fff; }
+  .seg.light button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .bar { height: 12px; background: var(--soft); border-radius: 6px; overflow: hidden; margin-top: 12px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  #sr-out { margin-top: 10px; min-height: 26px; font-size: 18px; }
   .check { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
   .check:last-child { border-bottom: none; }
   .ok { color: var(--them); font-weight: 700; }
@@ -210,7 +213,7 @@
   <section class="tab on" id="tab-talk">
     <div class="card" id="setup" hidden>
       <h2>Скачайте переводчик</h2>
-      <p style="margin:0">Один раз, по Wi-Fi: около <b id="setup-mb">800</b> МБ. После этого переводчик работает без интернета.</p>
+      <p style="margin:0">Один раз, по Wi-Fi: около <b id="setup-mb">470</b> МБ. После этого переводчик работает без интернета.</p>
       <button class="btn" id="dl" style="margin-top:14px">Скачать</button>
       <div class="bar" hidden id="dl-bar"><i></i></div>
       <div class="note" id="dl-note"></div>
@@ -220,7 +223,8 @@
         Сверху выберите язык собеседника.<br>
         Нажмите <b>синюю кнопку</b> и говорите по-русски.<br>
         Собеседник нажимает <b>зелёную</b> и отвечает.<br>
-        Перевод появится здесь и прозвучит вслух.
+        Перевод появится здесь и прозвучит вслух.<br>
+        Можно и написать — в том числе через 🎤 на клавиатуре.
       </div>
     </div>
   </section>
@@ -265,6 +269,27 @@
       <a class="call" href="tel:104"><span>Служба тыла<br><small>сирены, укрытия</small></span><span class="n">104</span></a>
       <a class="call" href="tel:112"><span>Единый номер</span><span class="n">112</span></a>
       <p class="note">Экстренные номера обычно набираются даже без сим-карты. Скажите по-английски: <b>«Russian, please»</b> — у скорой и полиции часто есть русскоязычные операторы.</p>
+    </div>
+
+    <div class="card">
+      <h2>Распознавание речи</h2>
+      <div class="seg light" id="engine">
+        <button data-e="google">Google в телефоне</button>
+        <button data-e="whisper">В приложении</button>
+      </div>
+      <p class="note"><b>Google</b> — быстрый и лёгкий, подходит слабому телефону. Без интернета работает, только если в телефоне скачаны офлайн-языки:
+        <b>Настройки → Google → Голосовой ввод (или Gboard → Голосовой ввод) → Офлайн-распознавание</b> → скачать русский, иврит, английский. Названия пунктов могут немного отличаться.</p>
+      <p class="note">Проверка: включите <b>режим полёта</b> и нажмите:</p>
+      <div class="seg light" id="sr-test">
+        <button data-l="ru">Русский</button>
+        <button data-l="he">Иврит</button>
+        <button data-l="en">English</button>
+      </div>
+      <div id="sr-out"></div>
+      <p class="note"><b>В приложении</b> — работает всегда, но на слабом телефоне думает 10–30 секунд. Нужно, если проверка выше не прошла.</p>
+      <button class="btn ghost" id="dl-w" style="margin-top:8px">Скачать распознавание (+<span id="dlw-mb">330</span> МБ)</button>
+      <div class="bar" hidden id="dlw-bar"><i></i></div>
+      <div class="note" id="dlw-note"></div>
     </div>
 
     <div class="card">

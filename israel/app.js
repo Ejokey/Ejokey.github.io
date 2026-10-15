@@ -1,5 +1,5 @@
 import { CATS } from './phrases.js';
-import { MODELS, SIZE_MB, BASIC } from './models.js';
+import { MODELS, SIZE_MB, BASIC, WHISPER } from './models.js';
 
 /* Курс: рублей за 1 шекель. Кросс-курс ЦБ РФ (USD 83,76 ₽ на 16.10.2026)
    и Банка Израиля (USD 3,103 ₪ на 15.10.2026). В приложении можно поменять. */
@@ -60,16 +60,17 @@ async function checkReady() {
   renderSetup(); renderReady();
 }
 const basicReady = () => BASIC.every(k => ready[k]);
+const whisperReady = () => WHISPER.every(k => ready[k]);
 
 /* ---------- скачивание ---------- */
 let wakeLock = null;
-async function download(keys) {
+async function download(keys, ui = { btn: 'dl', bar: 'dl-bar', note: 'dl-note' }) {
   const total = keys.reduce((s, k) => s + SIZE_MB[k], 0) * 1e6;
   const files = new Map();
-  const bar = $('dl-bar'), fill = bar.querySelector('i');
+  const bar = $(ui.bar), fill = bar.querySelector('i'), note = $(ui.note);
   if (!navigator.serviceWorker || !navigator.serviceWorker.controller) { location.reload(); return; }
-  bar.hidden = false; $('dl').disabled = true;
-  $('dl-note').textContent = 'Не закрывайте приложение и не выключайте экран.';
+  bar.hidden = false; $(ui.btn).disabled = true;
+  note.textContent = 'Не закрывайте приложение и не выключайте экран.';
   try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
   const onMsg = d => {
     if (d.type === 'dl-progress') {
@@ -77,25 +78,26 @@ async function download(keys) {
       const got = [...files.values()].reduce((a, b) => a + b, 0);
       const pct = Math.min(99, Math.round(got / total * 100));
       fill.style.width = pct + '%';
-      $('dl-note').textContent = `Скачано ${Math.round(got / 1e6)} из ~${Math.round(total / 1e6)} МБ. Не закрывайте приложение.`;
+      note.textContent = `Скачано ${Math.round(got / 1e6)} из ~${Math.round(total / 1e6)} МБ. Не закрывайте приложение.`;
     }
   };
   dlListeners.add(onMsg);
   try {
     await call('download', { keys });
     fill.style.width = '100%';
-    $('dl-note').textContent = 'Готово. Переводчик работает без интернета.';
-    toast('Готово! Теперь переводчик работает без интернета.');
+    note.textContent = 'Готово. Работает без интернета.';
+    toast('Готово! Работает без интернета.');
   } catch (e) {
-    $('dl-note').innerHTML = `<span class="warn">Не получилось: ${esc(e.message)}.</span> Проверьте Wi-Fi и нажмите ещё раз — скачанное не пропадёт.`;
+    note.innerHTML = `<span class="warn">Не получилось: ${esc(e.message)}.</span> Проверьте Wi-Fi и нажмите ещё раз — скачанное не пропадёт.`;
   } finally {
     dlListeners.delete(onMsg);
-    $('dl').disabled = false;
+    $(ui.btn).disabled = false;
     try { wakeLock && wakeLock.release(); } catch (e) {}
     await checkReady();
   }
 }
 $('dl').addEventListener('click', () => download(BASIC.filter(k => !ready[k])));
+$('dl-w').addEventListener('click', () => download(WHISPER.filter(k => !ready[k]), { btn: 'dl-w', bar: 'dlw-bar', note: 'dlw-note' }));
 
 function renderSetup() {
   const need = BASIC.filter(k => !ready[k]);
@@ -128,9 +130,13 @@ function renderReady() {
     `<div class="check"><span>${name}</span><span class="${ok ? 'ok' : 'no'}">${ok ? '✓ ' + okText : '✗ ' + noText}</span></div>`;
   $('ready').innerHTML =
     row('Переводчик', basicReady(), 'скачан', 'не скачан') +
+    row('Распознавание в приложении', whisperReady(), 'скачано', 'не скачано') +
     row('Голос: иврит', !!voiceFor('he')) +
     row('Голос: русский', !!voiceFor('ru')) +
     row('Голос: английский', !!voiceFor('en'));
+  $('dl-w').hidden = whisperReady();
+  $('dlw-mb').textContent = WHISPER.filter(k => !ready[k]).reduce((s, k) => s + SIZE_MB[k], 0);
+  document.querySelectorAll('#engine button').forEach(b => b.classList.toggle('on', b.dataset.e === engine));
 }
 
 /* ---------- переводчик ---------- */
@@ -151,10 +157,12 @@ $('other').addEventListener('click', e => {
 
 let warmed = '';
 function warm() {
-  if (warmed === other || !basicReady()) return;
-  warmed = other;
+  const sig = other + engine;
+  if (warmed === sig || !basicReady()) return;
+  warmed = sig;
   // Поднимаем модели заранее, чтобы первый перевод не ждал загрузки.
-  ['asr-base', 'ru-' + other, other + '-ru', ...(other === 'he' ? ['asr-he'] : [])].reduce((p, key) => p.then(() => call('warm', { key }).catch(() => {})), Promise.resolve());
+  const asr = engine === 'whisper' && whisperReady() ? ['asr-base', ...(other === 'he' ? ['asr-he'] : [])] : [];
+  ['ru-' + other, other + '-ru', ...asr].reduce((p, key) => p.then(() => call('warm', { key }).catch(() => {})), Promise.resolve());
 }
 
 const chat = $('chat');
@@ -197,8 +205,56 @@ async function translateAndShow(card, text, from, to) {
   speak(out, to);
 }
 
+/* ---------- распознавание речи ----------
+   google  — распознаватель, встроенный в Android (через Chrome). Быстрый и лёгкий,
+             но без интернета работает, только если в телефоне скачаны офлайн-языки.
+   whisper — свои модели в приложении. Работает всегда, но тяжелее для слабого телефона. */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let engine = store.get('engine') || (SR ? 'google' : 'whisper');
+if (!SR) engine = 'whisper';
+function setEngine(e) { engine = e; store.set('engine', e); renderReady(); warm(); }
+$('engine').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.e === 'google' && !SR) { toast('В этом браузере нет распознавания Google. Откройте в Chrome.'); return; }
+  setEngine(b.dataset.e);
+});
+const SR_LANG = { ru: 'ru-RU', he: 'he-IL', en: 'en-US' };
+const SR_OFFLINE = ['network', 'service-not-allowed', 'language-not-supported'];
+
+// Одна попытка распознать фразу через Google. onText — промежуточный текст для показа.
+function googleListen(lang, onText) {
+  const r = new SR();
+  r.lang = SR_LANG[lang]; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
+  let final = '', interim = '', error = null, heard = false, ended = false;
+  const done = new Promise(resolve => {
+    const finish = () => { if (ended) return; ended = true; clearTimeout(t1); clearTimeout(t2); resolve({ text: (final || interim).trim(), error }); };
+    // Сторож: если распознаватель молчит (так бывает без сети) — не висим вечно.
+    const t1 = setTimeout(() => { if (!heard) { error = error || 'network'; try { r.abort(); } catch (e) {} finish(); } }, 7000);
+    const t2 = setTimeout(() => { try { r.stop(); } catch (e) {} setTimeout(finish, 1500); }, 30000);
+    r.onaudiostart = r.onspeechstart = () => { heard = true; };
+    r.onresult = e => {
+      heard = true;
+      interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += e.results[i][0].transcript; else interim += e.results[i][0].transcript;
+      }
+      onText && onText((final + ' ' + interim).trim());
+    };
+    r.onerror = e => { error = e.error || 'error'; };
+    r.onend = finish;
+  });
+  try { r.start(); } catch (e) { error = 'network'; }
+  return { stop: () => { try { r.stop(); } catch (e) {} }, done };
+}
+function googleErrorText(err) {
+  if (err === 'no-speech') return 'Ничего не слышно. Нажмите и говорите ближе к телефону.';
+  if (err === 'not-allowed' || err === 'audio-capture') return 'Нет доступа к микрофону. Разрешите его в настройках браузера.';
+  if (SR_OFFLINE.includes(err)) return 'Распознавание Google без интернета не сработало.';
+  return 'Не разобрал (' + err + '). Попробуйте ещё раз.';
+}
+
 /* запись с микрофона */
-let rec = null;            // { side, recorder, stream, chunks, timer }
+let rec = null;            // whisper: { side, recorder, stream, chunks, timer }; google: { side, google, card }
 let busy = false;
 function setMics() {
   const me = $('mic-me'), them = $('mic-them');
@@ -215,6 +271,8 @@ function setMics() {
 async function startRec(side) {
   if (!basicReady()) { toast('Сначала скачайте переводчик.'); return; }
   try { speechSynthesis.cancel(); } catch (e) {}
+  if (engine === 'google' && SR) return startGoogle(side);
+  if (!whisperReady()) { toast('Распознавание в приложении не скачано. Скачайте его в «Справке» или выберите Google.'); return; }
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
@@ -230,8 +288,37 @@ async function startRec(side) {
   if (navigator.vibrate) navigator.vibrate(30);
 }
 
+async function startGoogle(side) {
+  const from = side === 'me' ? 'ru' : other;
+  const to = side === 'me' ? other : 'ru';
+  const card = addCard(side, other);
+  const google = googleListen(from, t => card.src(t, from));
+  rec = { side, google, card };
+  setMics();
+  if (navigator.vibrate) navigator.vibrate(30);
+  const { text, error } = await google.done;        // сам заканчивает, когда человек замолчал
+  rec = null; busy = true; setMics();
+  try {
+    if (!text) {
+      if (SR_OFFLINE.includes(error) && whisperReady()) {
+        setEngine('whisper');
+        card.fail('Google без интернета не работает — переключил на распознавание в приложении. Нажмите кнопку ещё раз.');
+      } else if (SR_OFFLINE.includes(error)) {
+        card.fail('Google без интернета не работает. Напишите текстом (можно через 🎤 на клавиатуре) или скачайте распознавание в «Справке».');
+      } else card.fail(googleErrorText(error || 'no-speech'));
+      return;
+    }
+    await translateAndShow(card, text, from, to);
+  } catch (e) {
+    card.fail('Ошибка: ' + e.message);
+  } finally {
+    busy = false; setMics();
+  }
+}
+
 async function stopRec() {
   if (!rec) return;
+  if (rec.google) { rec.google.stop(); return; }    // дальше всё сделает startGoogle
   const { side, recorder, stream, chunks, timer } = rec;
   clearTimeout(timer);
   rec = null; busy = true; setMics();
@@ -270,6 +357,24 @@ function rms(a) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * a[i]
 
 $('mic-me').addEventListener('click', () => rec ? stopRec() : startRec('me'));
 $('mic-them').addEventListener('click', () => rec ? stopRec() : startRec('them'));
+
+/* проверка Google-распознавания: в режиме полёта */
+$('sr-test').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b || !SR) { if (!SR) toast('В этом браузере нет распознавания Google.'); return; }
+  const lang = b.dataset.l, out = $('sr-out');
+  // Где браузер умеет ставить языки для офлайна (новый Chrome) — просим поставить.
+  try {
+    if (SR.available) {
+      const st = await SR.available({ langs: [SR_LANG[lang]], processLocally: true });
+      if (st === 'downloadable' && navigator.onLine) { out.textContent = 'Скачиваю язык для офлайна…'; await SR.install({ langs: [SR_LANG[lang]], processLocally: true }); }
+    }
+  } catch (err) {}
+  out.textContent = 'Говорите…';
+  const { text, error } = await googleListen(lang, t => { out.textContent = t; }).done;
+  out.innerHTML = text
+    ? `<span class="ok">✓ Работает${navigator.onLine ? ' (но интернет включён — проверьте в режиме полёта)' : ' без интернета'}:</span> ${esc(text)}`
+    : `<span class="no">✗ ${esc(googleErrorText(error || 'no-speech'))}</span>`;
+});
 
 /* набор текстом (в том числе голосом с клавиатуры) */
 async function sendTyped() {
