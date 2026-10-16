@@ -2,7 +2,7 @@
 // Оболочка приложения — в своём кэше. Модели (./models/ и Hugging Face) кэширует сам transformers.js
 // в 'transformers-cache', поэтому их здесь не трогаем, чтобы не хранить дважды.
 // Заголовки COOP/COEP добавляем сами: без них браузер не даст многопоточность, и перевод будет медленнее.
-const CACHE = 'israel-v4';
+const CACHE = 'israel-v5';
 const ASSETS = ['./', './index.html', './app.js', './phrases.js', './models.js', './worker.js',
   './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png',
   './vendor/transformers.min.js', './vendor/ort-wasm-simd-threaded.jsep.mjs', './vendor/ort-wasm-simd-threaded.jsep.wasm'];
