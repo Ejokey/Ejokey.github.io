@@ -25,7 +25,10 @@ if ('serviceWorker' in navigator) {
       sessionStorage.setItem('coi', '1'); location.reload();
     }
   }).catch(() => {});
+  // Вышла новая версия приложения — один раз перезагружаемся, чтобы не показывать старую.
+  const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController && !sessionStorage.getItem('upd')) { sessionStorage.setItem('upd', '1'); location.reload(); return; }
     if (!self.crossOriginIsolated && !sessionStorage.getItem('coi')) { sessionStorage.setItem('coi', '1'); location.reload(); }
   });
 }
